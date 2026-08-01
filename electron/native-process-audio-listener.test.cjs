@@ -117,6 +117,130 @@ test("native listener cannot attach after it is stopped during discovery", async
   assert.equal(spawnCount, 0);
 });
 
+test("native listener coalesces helper-process churn into one reattach per cooldown", async () => {
+  let pids = [10, 11, 12];
+  let clock = 1_000;
+  let spawnCount = 0;
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    pollIntervalMs: 60_000,
+    reattachCooldownMs: 5_000,
+    now: () => clock,
+    processDiscovery: async () => ({ pids: [...pids], rootPids: [10] }),
+    spawnProcess: () => {
+      spawnCount += 1;
+      return fakeChild();
+    },
+  });
+
+  await listener.start();
+  assert.equal(spawnCount, 1);
+
+  // Short-lived helper processes appear and disappear while every process the
+  // helper is already tapping stays alive. Chromium and Electron based voice
+  // clients do this continuously, and rebuilding the Core Audio tap for each
+  // change tears down the aggregate device without changing what is metered.
+  for (const churn of [[13], [13, 14], [15], [16]]) {
+    pids = [10, 11, 12, ...churn];
+    clock += 1_500;
+    await listener.poll();
+  }
+
+  assert.equal(spawnCount, 2, "expected one coalesced reattach, not one per poll");
+  listener.stop();
+});
+
+test("native listener never rebuilds the tap during an active voice session", async () => {
+  let pids = [10, 11];
+  let clock = 1_000;
+  let spawnCount = 0;
+  let child = null;
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    pollIntervalMs: 60_000,
+    reattachCooldownMs: 5_000,
+    sessionIdleMs: 60_000,
+    now: () => clock,
+    processDiscovery: async () => ({ pids: [...pids], rootPids: [10] }),
+    spawnProcess: () => {
+      spawnCount += 1;
+      child = fakeChild();
+      return child;
+    },
+  });
+
+  await listener.start();
+  child.stdout.emit("data", '{"type":"ready","source":"Codex"}\n');
+  child.stdout.emit("data", '{"type":"level","level":0.4}\n');
+
+  for (let index = 0; index < 6; index += 1) {
+    pids = [10, 11, 100 + index];
+    clock += 3_000;
+    await listener.poll();
+  }
+
+  assert.equal(spawnCount, 1, "a live session must not be interrupted by process churn");
+  listener.stop();
+});
+
+test("native listener reattaches immediately when every tapped process disappears", async () => {
+  let pids = [10, 11];
+  let clock = 1_000;
+  const spawnedArgs = [];
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    pollIntervalMs: 60_000,
+    reattachCooldownMs: 5_000,
+    now: () => clock,
+    processDiscovery: async () => ({ pids: [...pids], rootPids: [pids[0]] }),
+    spawnProcess: (_helperPath, args) => {
+      spawnedArgs.push(args);
+      return fakeChild();
+    },
+  });
+
+  await listener.start();
+  assert.deepEqual(spawnedArgs, [["--pid", "10", "--pid", "11"]]);
+
+  // The voice application restarted: same identity, brand new pids, and still
+  // well inside the cooldown window.
+  pids = [20, 21];
+  clock += 500;
+  await listener.poll();
+
+  assert.equal(spawnedArgs.length, 2);
+  assert.deepEqual(spawnedArgs.at(-1), ["--pid", "20", "--pid", "21"]);
+  listener.stop();
+});
+
+test("native listener reports a deferred helper and captures once output begins", async () => {
+  const statuses = [];
+  const child = fakeChild();
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    processDiscovery: async () => ({ pids: [10], rootPids: [10] }),
+    spawnProcess: () => child,
+    onStatus: (status) => statuses.push(status),
+  });
+
+  await listener.start();
+  child.stdout.emit("data", '{"type":"waiting"}\n');
+  assert.equal(statuses.at(-1).capturing, false);
+  assert.equal(statuses.at(-1).monitoring, true);
+
+  child.stdout.emit("data", '{"type":"ready","source":"macOS process audio"}\n');
+  assert.equal(statuses.at(-1).capturing, true);
+  assert.equal(statuses.at(-1).source, "macOS process audio");
+
+  child.stdout.emit("data", '{"type":"waiting"}\n');
+  assert.equal(statuses.at(-1).capturing, false);
+  listener.stop();
+});
+
 test("native listener resolves the configured application before capture", async () => {
   let discoveryOptions = null;
   const voiceSource = {
