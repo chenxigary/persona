@@ -248,6 +248,19 @@ class NativeProcessAudioListener {
       });
       return;
     }
+    if (message.type === "waiting") {
+      // The helper is armed but deliberately not tapping yet: it defers the
+      // Core Audio tap until the target reports running output, because a tap
+      // attached while the target is negotiating a new audio session can keep
+      // that session from connecting.
+      this.reportStatus({
+        available: true,
+        capturing: false,
+        monitoring: true,
+        source: null,
+      });
+      return;
+    }
     if (message.type === "error") {
       this.reportStatus({
         available: false,

@@ -78,6 +78,32 @@ std::vector<AudioObjectID> audioProcessObjects(const std::vector<pid_t>& request
   return matches;
 }
 
+// While the target application is negotiating a new audio session, an attached
+// process tap can prevent that session from ever being established (observed
+// with the ChatGPT desktop client: with a tap attached, the first voice
+// connection times out; without one it connects, and a tap attached after the
+// session is live is harmless). The helper therefore waits until the target
+// reports running output before creating the tap, and releases the tap again
+// once output has stopped.
+constexpr int kOutputCheckTicks = 30;    // ~1 second at the 33ms meter cadence
+constexpr int kOutputStoppedChecks = 3;  // release after ~3 seconds without output
+
+bool anyProcessRunningOutput(const std::vector<AudioObjectID>& processObjects) {
+  for (AudioObjectID object : processObjects) {
+    auto address = propertyAddress(kAudioProcessPropertyIsRunningOutput);
+    UInt32 isRunningOutput = 0;
+    UInt32 size = sizeof(isRunningOutput);
+    const OSStatus status = AudioObjectGetPropertyData(
+        object, &address, 0, nullptr, &size, &isRunningOutput);
+    // If the property cannot be read, treat the process as running so the
+    // helper degrades to the previous attach-immediately behaviour instead of
+    // never attaching at all.
+    if (status != noErr) return true;
+    if (isRunningOutput != 0) return true;
+  }
+  return false;
+}
+
 struct MeterContext {
   AudioStreamBasicDescription format{};
   std::atomic<float> peak{0.0f};
@@ -155,6 +181,150 @@ OSStatus meterIOProc(
   return noErr;
 }
 
+// Creates the tap and aggregate device for the given process objects, meters
+// output levels until the helper is terminated or the target stops producing
+// output, then tears the Core Audio objects down again. Returns 0 when the
+// cycle ended cleanly and a process exit code when setup failed.
+int runMeterCycle(const std::vector<pid_t>& processIds,
+                  const std::vector<AudioObjectID>& processObjects) {
+  NSMutableArray<NSNumber *> *processNumbers =
+      [NSMutableArray arrayWithCapacity:processObjects.size()];
+  for (AudioObjectID object : processObjects) {
+    [processNumbers addObject:@(object)];
+  }
+  CATapDescription *tapDescription =
+      [[CATapDescription alloc] initStereoMixdownOfProcesses:processNumbers];
+  if (tapDescription == nil) {
+    return fail(@"Unable to configure the Core Audio process tap.");
+  }
+  tapDescription.name = @"Persona voice output meter";
+  [tapDescription setPrivate:YES];
+
+  AudioObjectID tapID = kAudioObjectUnknown;
+  OSStatus status = AudioHardwareCreateProcessTap(tapDescription, &tapID);
+  if (status != noErr) return fail(@"Unable to create a Core Audio process tap.", status);
+
+  CFStringRef tapUIDRef = nullptr;
+  auto tapUIDAddress = propertyAddress(kAudioTapPropertyUID);
+  UInt32 tapUIDSize = sizeof(tapUIDRef);
+  status = AudioObjectGetPropertyData(
+      tapID, &tapUIDAddress, 0, nullptr, &tapUIDSize, &tapUIDRef);
+  if (status != noErr || tapUIDRef == nullptr) {
+    AudioHardwareDestroyProcessTap(tapID);
+    return fail(@"Unable to read the Core Audio tap identifier.", status);
+  }
+  NSString *tapUID = [(__bridge NSString *)tapUIDRef copy];
+  CFRelease(tapUIDRef);
+
+  NSString *aggregateUID = [NSString stringWithFormat:@"com.xikhar.persona.%@",
+                                                      NSUUID.UUID.UUIDString];
+  NSDictionary *aggregateDescription = @{
+    @kAudioAggregateDeviceNameKey : @"Persona Output Meter",
+    @kAudioAggregateDeviceUIDKey : aggregateUID,
+    @kAudioAggregateDeviceIsPrivateKey : @YES,
+    @kAudioAggregateDeviceTapAutoStartKey : @YES,
+  };
+  AudioObjectID aggregateID = kAudioObjectUnknown;
+  status = AudioHardwareCreateAggregateDevice(
+      (__bridge CFDictionaryRef)aggregateDescription, &aggregateID);
+  if (status != noErr) {
+    AudioHardwareDestroyProcessTap(tapID);
+    return fail(@"Unable to create a private Core Audio aggregate device.", status);
+  }
+
+  CFArrayRef tapList = (__bridge CFArrayRef)@[ tapUID ];
+  auto tapListAddress = propertyAddress(kAudioAggregateDevicePropertyTapList);
+  UInt32 tapListSize = sizeof(tapList);
+  status = AudioObjectSetPropertyData(
+      aggregateID, &tapListAddress, 0, nullptr, tapListSize, &tapList);
+  if (status != noErr) {
+    AudioHardwareDestroyAggregateDevice(aggregateID);
+    AudioHardwareDestroyProcessTap(tapID);
+    return fail(@"Unable to attach the process tap to its aggregate device.", status);
+  }
+
+  MeterContext meter;
+  // Core Audio publishes the aggregate device's tapped input stream
+  // asynchronously after the tap list is attached. Reading the format on the
+  // first attempt races that setup and intermittently fails with
+  // kAudioHardwareBadObjectError, so poll both scopes until the stream
+  // appears rather than giving up immediately.
+  const AudioObjectPropertyScope formatScopes[] = {
+      kAudioDevicePropertyScopeInput,
+      kAudioObjectPropertyScopeGlobal,
+  };
+  status = kAudioHardwareBadObjectError;
+  const auto formatDeadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (true) {
+    for (const AudioObjectPropertyScope scope : formatScopes) {
+      auto formatAddress =
+          propertyAddress(kAudioDevicePropertyStreamFormat, scope);
+      UInt32 formatSize = sizeof(meter.format);
+      const OSStatus readStatus = AudioObjectGetPropertyData(
+          aggregateID, &formatAddress, 0, nullptr, &formatSize, &meter.format);
+      if (readStatus == noErr && meter.format.mSampleRate > 0 &&
+          meter.format.mBitsPerChannel > 0) {
+        status = noErr;
+        break;
+      }
+      status = readStatus != noErr ? readStatus : kAudioHardwareBadObjectError;
+    }
+    if (status == noErr) break;
+    if (!running.load(std::memory_order_relaxed)) break;
+    if (std::chrono::steady_clock::now() >= formatDeadline) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+
+  // Terminated while waiting for the tapped stream to appear. Release the
+  // objects we already created instead of leaving them behind.
+  if (!running.load(std::memory_order_relaxed)) {
+    AudioHardwareDestroyAggregateDevice(aggregateID);
+    AudioHardwareDestroyProcessTap(tapID);
+    return 0;
+  }
+
+  if (status != noErr) {
+    AudioHardwareDestroyAggregateDevice(aggregateID);
+    AudioHardwareDestroyProcessTap(tapID);
+    return fail(@"Unable to read the tapped stream format.", status);
+  }
+
+  AudioDeviceIOProcID ioProcID = nullptr;
+  status = AudioDeviceCreateIOProcID(aggregateID, meterIOProc, &meter, &ioProcID);
+  if (status == noErr) status = AudioDeviceStart(aggregateID, ioProcID);
+  if (status != noErr) {
+    if (ioProcID != nullptr) AudioDeviceDestroyIOProcID(aggregateID, ioProcID);
+    AudioHardwareDestroyAggregateDevice(aggregateID);
+    AudioHardwareDestroyProcessTap(tapID);
+    return fail(@"Unable to start the Core Audio output meter.", status);
+  }
+
+  emitJSON(@{@"type" : @"ready", @"source" : @"macOS process audio"});
+
+  int stoppedChecks = 0;
+  int ticksUntilCheck = kOutputCheckTicks;
+  while (running.load(std::memory_order_relaxed)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(33));
+    const float level = meter.peak.exchange(0.0f, std::memory_order_relaxed);
+    emitJSON(@{@"type" : @"level", @"level" : @(level)});
+    if (--ticksUntilCheck > 0) continue;
+    ticksUntilCheck = kOutputCheckTicks;
+    const auto currentObjects = audioProcessObjects(processIds);
+    if (currentObjects.empty() || !anyProcessRunningOutput(currentObjects)) {
+      if (++stoppedChecks >= kOutputStoppedChecks) break;
+    } else {
+      stoppedChecks = 0;
+    }
+  }
+
+  AudioDeviceStop(aggregateID, ioProcID);
+  AudioDeviceDestroyIOProcID(aggregateID, ioProcID);
+  AudioHardwareDestroyAggregateDevice(aggregateID);
+  AudioHardwareDestroyProcessTap(tapID);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, const char *argv[]) {
@@ -180,136 +350,29 @@ int main(int argc, const char *argv[]) {
     signal(SIGINT, handleSignal);
     signal(SIGTERM, handleSignal);
 
-    const auto processObjects = audioProcessObjects(processIds);
-    if (processObjects.empty()) {
-      return fail(@"No active Core Audio process matches the requested application.");
-    }
-
-    NSMutableArray<NSNumber *> *processNumbers =
-        [NSMutableArray arrayWithCapacity:processObjects.size()];
-    for (AudioObjectID object : processObjects) {
-      [processNumbers addObject:@(object)];
-    }
-    CATapDescription *tapDescription =
-        [[CATapDescription alloc] initStereoMixdownOfProcesses:processNumbers];
-    if (tapDescription == nil) {
-      return fail(@"Unable to configure the Core Audio process tap.");
-    }
-    tapDescription.name = @"Persona voice output meter";
-    [tapDescription setPrivate:YES];
-
-    AudioObjectID tapID = kAudioObjectUnknown;
-    OSStatus status = AudioHardwareCreateProcessTap(tapDescription, &tapID);
-    if (status != noErr) return fail(@"Unable to create a Core Audio process tap.", status);
-
-    CFStringRef tapUIDRef = nullptr;
-    auto tapUIDAddress = propertyAddress(kAudioTapPropertyUID);
-    UInt32 tapUIDSize = sizeof(tapUIDRef);
-    status = AudioObjectGetPropertyData(
-        tapID, &tapUIDAddress, 0, nullptr, &tapUIDSize, &tapUIDRef);
-    if (status != noErr || tapUIDRef == nullptr) {
-      AudioHardwareDestroyProcessTap(tapID);
-      return fail(@"Unable to read the Core Audio tap identifier.", status);
-    }
-    NSString *tapUID = [(__bridge NSString *)tapUIDRef copy];
-    CFRelease(tapUIDRef);
-
-    NSString *aggregateUID = [NSString stringWithFormat:@"com.xikhar.persona.%@",
-                                                        NSUUID.UUID.UUIDString];
-    NSDictionary *aggregateDescription = @{
-      @kAudioAggregateDeviceNameKey : @"Persona Output Meter",
-      @kAudioAggregateDeviceUIDKey : aggregateUID,
-      @kAudioAggregateDeviceIsPrivateKey : @YES,
-      @kAudioAggregateDeviceTapAutoStartKey : @YES,
-    };
-    AudioObjectID aggregateID = kAudioObjectUnknown;
-    status = AudioHardwareCreateAggregateDevice(
-        (__bridge CFDictionaryRef)aggregateDescription, &aggregateID);
-    if (status != noErr) {
-      AudioHardwareDestroyProcessTap(tapID);
-      return fail(@"Unable to create a private Core Audio aggregate device.", status);
-    }
-
-    CFArrayRef tapList = (__bridge CFArrayRef)@[ tapUID ];
-    auto tapListAddress = propertyAddress(kAudioAggregateDevicePropertyTapList);
-    UInt32 tapListSize = sizeof(tapList);
-    status = AudioObjectSetPropertyData(
-        aggregateID, &tapListAddress, 0, nullptr, tapListSize, &tapList);
-    if (status != noErr) {
-      AudioHardwareDestroyAggregateDevice(aggregateID);
-      AudioHardwareDestroyProcessTap(tapID);
-      return fail(@"Unable to attach the process tap to its aggregate device.", status);
-    }
-
-    MeterContext meter;
-    // Core Audio publishes the aggregate device's tapped input stream
-    // asynchronously after the tap list is attached. Reading the format on the
-    // first attempt races that setup and intermittently fails with
-    // kAudioHardwareBadObjectError, so poll both scopes until the stream
-    // appears rather than giving up immediately.
-    const AudioObjectPropertyScope formatScopes[] = {
-        kAudioDevicePropertyScopeInput,
-        kAudioObjectPropertyScopeGlobal,
-    };
-    status = kAudioHardwareBadObjectError;
-    const auto formatDeadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (true) {
-      for (const AudioObjectPropertyScope scope : formatScopes) {
-        auto formatAddress =
-            propertyAddress(kAudioDevicePropertyStreamFormat, scope);
-        UInt32 formatSize = sizeof(meter.format);
-        const OSStatus readStatus = AudioObjectGetPropertyData(
-            aggregateID, &formatAddress, 0, nullptr, &formatSize, &meter.format);
-        if (readStatus == noErr && meter.format.mSampleRate > 0 &&
-            meter.format.mBitsPerChannel > 0) {
-          status = noErr;
-          break;
-        }
-        status = readStatus != noErr ? readStatus : kAudioHardwareBadObjectError;
-      }
-      if (status == noErr) break;
-      if (!running.load(std::memory_order_relaxed)) break;
-      if (std::chrono::steady_clock::now() >= formatDeadline) break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    }
-
-    // Terminated while waiting for the tapped stream to appear. Release the
-    // objects we already created instead of leaving them behind.
-    if (!running.load(std::memory_order_relaxed)) {
-      AudioHardwareDestroyAggregateDevice(aggregateID);
-      AudioHardwareDestroyProcessTap(tapID);
-      return 0;
-    }
-
-    if (status != noErr) {
-      AudioHardwareDestroyAggregateDevice(aggregateID);
-      AudioHardwareDestroyProcessTap(tapID);
-      return fail(@"Unable to read the tapped stream format.", status);
-    }
-
-    AudioDeviceIOProcID ioProcID = nullptr;
-    status = AudioDeviceCreateIOProcID(aggregateID, meterIOProc, &meter, &ioProcID);
-    if (status == noErr) status = AudioDeviceStart(aggregateID, ioProcID);
-    if (status != noErr) {
-      if (ioProcID != nullptr) AudioDeviceDestroyIOProcID(aggregateID, ioProcID);
-      AudioHardwareDestroyAggregateDevice(aggregateID);
-      AudioHardwareDestroyProcessTap(tapID);
-      return fail(@"Unable to start the Core Audio output meter.", status);
-    }
-
-    emitJSON(@{@"type" : @"ready", @"source" : @"macOS process audio"});
-
+    // Wait until the target application actually produces output before
+    // creating the tap. Attaching earlier — while the application is still
+    // negotiating its audio session — can prevent that session from being
+    // established at all, and a tap attached once audio is flowing yields the
+    // same meter. When output stops again, runMeterCycle releases the tap so
+    // the next session can be negotiated without interference.
+    bool announcedWaiting = false;
     while (running.load(std::memory_order_relaxed)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(33));
-      const float level = meter.peak.exchange(0.0f, std::memory_order_relaxed);
-      emitJSON(@{@"type" : @"level", @"level" : @(level)});
+      @autoreleasepool {
+        const auto processObjects = audioProcessObjects(processIds);
+        if (!processObjects.empty() && anyProcessRunningOutput(processObjects)) {
+          announcedWaiting = false;
+          const int outcome = runMeterCycle(processIds, processObjects);
+          if (outcome != 0) return outcome;
+          continue;
+        }
+        if (!announcedWaiting) {
+          emitJSON(@{@"type" : @"waiting"});
+          announcedWaiting = true;
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
-
-    AudioDeviceStop(aggregateID, ioProcID);
-    AudioDeviceDestroyIOProcID(aggregateID, ioProcID);
-    AudioHardwareDestroyAggregateDevice(aggregateID);
-    AudioHardwareDestroyProcessTap(tapID);
     return 0;
   }
 }

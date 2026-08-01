@@ -216,6 +216,31 @@ test("native listener reattaches immediately when every tapped process disappear
   listener.stop();
 });
 
+test("native listener reports a deferred helper and captures once output begins", async () => {
+  const statuses = [];
+  const child = fakeChild();
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    processDiscovery: async () => ({ pids: [10], rootPids: [10] }),
+    spawnProcess: () => child,
+    onStatus: (status) => statuses.push(status),
+  });
+
+  await listener.start();
+  child.stdout.emit("data", '{"type":"waiting"}\n');
+  assert.equal(statuses.at(-1).capturing, false);
+  assert.equal(statuses.at(-1).monitoring, true);
+
+  child.stdout.emit("data", '{"type":"ready","source":"macOS process audio"}\n');
+  assert.equal(statuses.at(-1).capturing, true);
+  assert.equal(statuses.at(-1).source, "macOS process audio");
+
+  child.stdout.emit("data", '{"type":"waiting"}\n');
+  assert.equal(statuses.at(-1).capturing, false);
+  listener.stop();
+});
+
 test("native listener resolves the configured application before capture", async () => {
   let discoveryOptions = null;
   const voiceSource = {
