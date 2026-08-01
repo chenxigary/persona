@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { frameStyle } from '../character-frame';
+import {
+  canGrow,
+  canShrink,
+  formatCharacterSize,
+  nudgeCharacterSize,
+} from '../character-size';
 import type { ScreenRect } from '../pointer-region';
 
 interface CharacterFrameProps {
+  characterSize: number;
   rect: ScreenRect | null;
   visible: boolean;
 }
 
 const RESIZE_MIN = { height: 480, width: 320 };
 
-export function CharacterFrame({ rect, visible }: CharacterFrameProps) {
+export function CharacterFrame({
+  characterSize,
+  rect,
+  visible,
+}: CharacterFrameProps) {
   const box = frameStyle(rect);
   const resizing = useRef<{ height: number; width: number; x: number; y: number } | null>(
     null,
@@ -22,6 +33,18 @@ export function CharacterFrame({ rect, visible }: CharacterFrameProps) {
   const handleHide = useCallback(() => {
     window.personaBridge?.hide();
   }, []);
+
+  const handleShrink = useCallback(() => {
+    void window.personaSettings?.setCharacterSize(
+      nudgeCharacterSize(characterSize, -1),
+    );
+  }, [characterSize]);
+
+  const handleGrow = useCallback(() => {
+    void window.personaSettings?.setCharacterSize(
+      nudgeCharacterSize(characterSize, 1),
+    );
+  }, [characterSize]);
 
   const handleResizeStart = useCallback((event: React.PointerEvent) => {
     event.preventDefault();
@@ -83,6 +106,38 @@ export function CharacterFrame({ rect, visible }: CharacterFrameProps) {
 
       {/* The whole bar is an OS window-drag surface; the buttons opt back out. */}
       <div className="character-frame__bar">
+        <div className="character-frame__actions character-frame__actions--size">
+          <button
+            className="character-frame__button"
+            disabled={!canShrink(characterSize)}
+            onClick={handleShrink}
+            tabIndex={visible ? 0 : -1}
+            title="缩小角色"
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16">
+              <path d="M4 7.2h8a.8.8 0 0 1 0 1.6H4a.8.8 0 0 1 0-1.6Z" fill="currentColor" />
+            </svg>
+          </button>
+          <span className="character-frame__size" title="角色大小">
+            {formatCharacterSize(characterSize)}
+          </span>
+          <button
+            className="character-frame__button"
+            disabled={!canGrow(characterSize)}
+            onClick={handleGrow}
+            tabIndex={visible ? 0 : -1}
+            title="放大角色"
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16">
+              <path
+                d="M7.2 4a.8.8 0 0 1 1.6 0v3.2H12a.8.8 0 0 1 0 1.6H8.8V12a.8.8 0 0 1-1.6 0V8.8H4a.8.8 0 0 1 0-1.6h3.2V4Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
         <span className="character-frame__grip" title="拖动移动角色" />
         <div className="character-frame__actions">
           <button
@@ -108,7 +163,7 @@ export function CharacterFrame({ rect, visible }: CharacterFrameProps) {
           >
             <svg aria-hidden="true" viewBox="0 0 16 16">
               <path
-                d="M4 7.2h8a.8.8 0 0 1 0 1.6H4a.8.8 0 0 1 0-1.6Z"
+                d="M3.6 6.1a.8.8 0 0 1 1.1-.1L8 8.9l3.3-2.9a.8.8 0 1 1 1 1.2l-3.8 3.3a.8.8 0 0 1-1 0L3.7 7.2a.8.8 0 0 1-.1-1.1Z"
                 fill="currentColor"
               />
             </svg>

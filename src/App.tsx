@@ -190,7 +190,11 @@ export function App() {
         playback={bodyOverride ? 'once' : 'loop'}
         speaking={speaking}
       />
-      <CharacterFrame rect={frameRect} visible={frameVisible} />
+      <CharacterFrame
+        characterSize={settings.character_size}
+        rect={frameRect}
+        visible={frameVisible}
+      />
     </main>
   ) : (
     <main className="app" />

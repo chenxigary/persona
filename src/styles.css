@@ -2367,10 +2367,11 @@ button {
 .character-frame__outline {
   position: absolute;
   inset: 0;
-  border: 1px solid rgb(255 255 255 / 32%);
+  /* Outline only. Any fill here tints the character underneath, which is the
+     one thing the frame must not do. */
+  border: 1px dashed rgb(255 255 255 / 38%);
   border-radius: 12px;
-  background: rgb(12 13 18 / 18%);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 28%);
+  background: none;
 }
 
 /* The bar doubles as the window's drag surface, so the whole strip is grabbable
@@ -2403,36 +2404,71 @@ button {
 }
 
 .character-frame__grip {
-  width: 28px;
-  height: 4px;
-  border-radius: 2px;
-  background: rgb(255 255 255 / 45%);
+  flex: 0 0 auto;
+  width: 34px;
+  height: 14px;
+  border-radius: 7px;
+  background: rgb(16 17 22 / 62%);
   cursor: grab;
+}
+
+.character-frame__grip::after {
+  content: '';
+  display: block;
+  width: 18px;
+  height: 2px;
+  margin: 6px auto;
+  border-radius: 1px;
+  background: rgb(255 255 255 / 70%);
+}
+
+.character-frame__size {
+  min-width: 34px;
+  padding: 0 2px;
+  border-radius: 6px;
+  background: rgb(16 17 22 / 62%);
+  color: rgb(255 255 255 / 92%);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 22px;
+  text-align: center;
+  -webkit-app-region: no-drag;
 }
 
 .character-frame__actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   -webkit-app-region: no-drag;
+}
+
+.character-frame__actions--size {
+  gap: 2px;
 }
 
 .character-frame__button {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: 6px;
-  background: rgb(255 255 255 / 12%);
-  color: rgb(255 255 255 / 88%);
+  /* The frame is see-through, so each control carries its own contrast rather
+     than relying on a panel behind it. */
+  background: rgb(16 17 22 / 62%);
+  color: rgb(255 255 255 / 92%);
   cursor: pointer;
-  transition: background 120ms ease-out;
+  transition: background 120ms ease-out, opacity 120ms ease-out;
 }
 
-.character-frame__button:hover {
-  background: rgb(255 255 255 / 26%);
+.character-frame__button:hover:not(:disabled) {
+  background: rgb(16 17 22 / 86%);
+}
+
+.character-frame__button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .character-frame__button:focus-visible {
@@ -2447,12 +2483,12 @@ button {
 
 .character-frame__resize {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  border-right: 2px solid rgb(255 255 255 / 45%);
-  border-bottom: 2px solid rgb(255 255 255 / 45%);
+  right: -1px;
+  bottom: -1px;
+  width: 16px;
+  height: 16px;
+  border-right: 3px solid rgb(255 255 255 / 70%);
+  border-bottom: 3px solid rgb(255 255 255 / 70%);
   border-radius: 0 0 12px 0;
   cursor: nwse-resize;
   -webkit-app-region: no-drag;
