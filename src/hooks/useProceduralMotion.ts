@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { VRM } from '@pixiv/three-vrm';
 import * as THREE from 'three';
 
-type MotionBone =
+export type MotionBone =
   | 'hips'
   | 'spine'
   | 'chest'
@@ -14,7 +14,7 @@ type MotionBone =
   | 'leftLowerArm'
   | 'rightLowerArm';
 
-const MOTION_BONES: readonly MotionBone[] = [
+export const MOTION_BONES: readonly MotionBone[] = [
   'hips',
   'spine',
   'chest',
@@ -27,9 +27,33 @@ const MOTION_BONES: readonly MotionBone[] = [
   'rightLowerArm',
 ];
 
-interface BoneState {
+/**
+ * Upper bound on a single frame's contribution. Without it a stalled or
+ * backgrounded window resumes with a large jump in the animation phase, which
+ * reads as the character snapping into a new pose.
+ */
+export const MAX_FRAME_DELTA = 0.1;
+
+export interface BoneState {
   node: THREE.Object3D;
   rotation: THREE.Quaternion;
+}
+
+/** Euler offsets in radians, composed onto the bone's captured rest rotation. */
+export type BonePose = Readonly<
+  Record<MotionBone, readonly [number, number, number]>
+>;
+
+interface PoseScratch {
+  euler: THREE.Euler;
+  offset: THREE.Quaternion;
+}
+
+function createScratch(): PoseScratch {
+  return {
+    euler: new THREE.Euler(0, 0, 0, 'XYZ'),
+    offset: new THREE.Quaternion(),
+  };
 }
 
 export function shouldUseProceduralMotion(
@@ -38,78 +62,101 @@ export function shouldUseProceduralMotion(
   return !animationUrls || animationUrls.length === 0;
 }
 
+export function advanceElapsed(previous: number, delta: number): number {
+  return previous + Math.min(delta, MAX_FRAME_DELTA);
+}
+
+/**
+ * The whole fallback pose for one instant. Offsets are relative to the
+ * normalised humanoid rig, which three-vrm keeps in a canonical T-pose, so the
+ * constant arm angles port across models rather than depending on how any
+ * particular VRM authored its rest pose.
+ */
+export function proceduralPose(elapsed: number, speaking: boolean): BonePose {
+  const breath = Math.sin(elapsed * 1.75);
+  const sway = Math.sin(elapsed * 0.72);
+  const conversational = speaking ? Math.sin(elapsed * 3.1) : 0;
+  const talkArm = speaking ? conversational * 0.07 : breath * 0.012;
+
+  return {
+    hips: [0, sway * 0.018, sway * 0.012],
+    spine: [breath * 0.013, sway * 0.018, sway * 0.01],
+    chest: [breath * 0.018, -sway * 0.015, -sway * 0.008],
+    head: [
+      speaking ? conversational * 0.028 : breath * 0.008,
+      sway * 0.045,
+      -sway * 0.018,
+    ],
+    leftShoulder: [0, 0, 0.08 + talkArm * 0.25],
+    rightShoulder: [0, 0, -0.08 - talkArm * 0.25],
+    leftUpperArm: [0.06, 0, 1.08 + talkArm],
+    rightUpperArm: [0.06, 0, -1.08 - talkArm],
+    leftLowerArm: [0, 0.04, 0.08 + talkArm * 0.35],
+    rightLowerArm: [0, -0.04, -0.08 - talkArm * 0.35],
+  };
+}
+
+export function captureBones(vrm: VRM | null): Map<MotionBone, BoneState> {
+  const bones = new Map<MotionBone, BoneState>();
+  if (!vrm?.humanoid) return bones;
+  for (const name of MOTION_BONES) {
+    const node = vrm.humanoid.getNormalizedBoneNode(name);
+    if (node) bones.set(name, { node, rotation: node.quaternion.clone() });
+  }
+  return bones;
+}
+
+export function applyPose(
+  bones: ReadonlyMap<MotionBone, BoneState>,
+  pose: BonePose,
+  scratch: PoseScratch = createScratch(),
+): void {
+  for (const name of MOTION_BONES) {
+    const bone = bones.get(name);
+    if (!bone) continue;
+    const [x, y, z] = pose[name];
+    scratch.euler.set(x, y, z, 'XYZ');
+    scratch.offset.setFromEuler(scratch.euler);
+    bone.node.quaternion.copy(bone.rotation).multiply(scratch.offset);
+  }
+}
+
+/** Puts every captured bone back exactly where it was before the fallback ran. */
+export function restorePose(bones: ReadonlyMap<MotionBone, BoneState>): void {
+  for (const bone of bones.values()) {
+    bone.node.quaternion.copy(bone.rotation);
+  }
+}
+
 export function useProceduralMotion(vrm: VRM | null) {
   const elapsed = useRef(0);
   const bones = useRef(new Map<MotionBone, BoneState>());
   const wasEnabled = useRef(false);
-  const offset = useRef(new THREE.Quaternion());
-  const euler = useRef(new THREE.Euler(0, 0, 0, 'XYZ'));
+  const scratch = useRef(createScratch());
 
   useEffect(() => {
     elapsed.current = 0;
-    bones.current.clear();
     wasEnabled.current = false;
-    if (!vrm?.humanoid) return;
-    for (const name of MOTION_BONES) {
-      const node = vrm.humanoid.getNormalizedBoneNode(name);
-      if (node) {
-        bones.current.set(name, {
-          node,
-          rotation: node.quaternion.clone(),
-        });
-      }
-    }
+    bones.current = captureBones(vrm);
   }, [vrm]);
-
-  const apply = useCallback(
-    (name: MotionBone, x: number, y: number, z: number) => {
-      const bone = bones.current.get(name);
-      if (!bone) return;
-      euler.current.set(x, y, z, 'XYZ');
-      offset.current.setFromEuler(euler.current);
-      bone.node.quaternion.copy(bone.rotation).multiply(offset.current);
-    },
-    [],
-  );
 
   return useCallback(
     (delta: number, speaking: boolean, enabled: boolean) => {
       if (!vrm?.humanoid) return;
       if (!enabled) {
-        if (wasEnabled.current) {
-          for (const bone of bones.current.values()) {
-            bone.node.quaternion.copy(bone.rotation);
-          }
-        }
+        if (wasEnabled.current) restorePose(bones.current);
         wasEnabled.current = false;
         return;
       }
 
       wasEnabled.current = true;
-      elapsed.current += Math.min(delta, 0.1);
-      const t = elapsed.current;
-      const breath = Math.sin(t * 1.75);
-      const sway = Math.sin(t * 0.72);
-      const conversational = speaking ? Math.sin(t * 3.1) : 0;
-
-      apply('hips', 0, sway * 0.018, sway * 0.012);
-      apply('spine', breath * 0.013, sway * 0.018, sway * 0.01);
-      apply('chest', breath * 0.018, -sway * 0.015, -sway * 0.008);
-      apply(
-        'head',
-        speaking ? conversational * 0.028 : breath * 0.008,
-        sway * 0.045,
-        -sway * 0.018,
+      elapsed.current = advanceElapsed(elapsed.current, delta);
+      applyPose(
+        bones.current,
+        proceduralPose(elapsed.current, speaking),
+        scratch.current,
       );
-
-      const talkArm = speaking ? conversational * 0.07 : breath * 0.012;
-      apply('leftShoulder', 0, 0, 0.08 + talkArm * 0.25);
-      apply('rightShoulder', 0, 0, -0.08 - talkArm * 0.25);
-      apply('leftUpperArm', 0.06, 0, 1.08 + talkArm);
-      apply('rightUpperArm', 0.06, 0, -1.08 - talkArm);
-      apply('leftLowerArm', 0, 0.04, 0.08 + talkArm * 0.35);
-      apply('rightLowerArm', 0, -0.04, -0.08 - talkArm * 0.35);
     },
-    [apply, vrm],
+    [vrm],
   );
 }

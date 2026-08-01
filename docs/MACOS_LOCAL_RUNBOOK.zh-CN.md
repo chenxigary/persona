@@ -74,6 +74,25 @@ Persona 的文件选择器要求 `.vrm` 扩展名。如果下载文件名是
 不要为了首次运行复制 `library.json.example` 或 `manifest.json.example`。这些示例
 引用的测试媒体不在干净仓库中，复制后会产生指向不存在文件的目录。
 
+## 窗口交互与点击穿透
+
+角色窗口是一个 430x680 的透明窗口，固定在屏幕右下角并置于所有应用之上。窗口的
+绝大部分是透明的，因此默认启用**点击穿透**：只有指针落在角色身上时窗口才接收鼠标
+事件，其余区域的点击直接落到下方的应用上。
+
+- 指针在角色上：可以拖拽旋转、滚轮缩放、右键拖拽平移。
+- 指针在透明区域：点击穿透，下方应用的按钮正常可点。
+- 需要从空白处操作窗口时，在托盘菜单勾选 **Always interactive**，整个窗口恢复接收
+  鼠标事件；调整完取消勾选即可回到穿透模式。
+
+若发现角色挡住了下方按钮且点不动，依次检查：
+
+1. 托盘菜单里 **Always interactive** 是否被勾上了。
+2. 是否运行的是旧版本——该行为在引入 `electron/window-interaction.cjs` 之后才有，
+   切换分支后需要重新构建 renderer（`npm run demo` 或 `npm run build`）。
+3. 角色占屏太大时，在 **Settings → Appearance** 中调小 character size,判定区域
+   会跟着缩小。
+
 ## 系统音频权限
 
 进入：
@@ -161,21 +180,36 @@ node -e 'console.log(require("electron"))'
 
 ## 故障处理：ChatGPT Voice 启动超时
 
-先验证是否与 Persona 的运行态有关：
+**此问题已定位并修复**，见 commit `c00b13a` 与 `08d2941`。根因是 Core Audio process
+tap：只要 tap 挂在 ChatGPT 的进程树上，它的语音会话就建立不起来；会话建立完成后
+再挂 tap 则完全正常。
 
-1. 完全退出 Persona。
-2. 重试 ChatGPT Voice。
-3. 若恢复，先启动 ChatGPT，再从独立 Terminal 启动单个 Persona 实例。
-4. 在 Activity Monitor 中确认没有多个 Persona/Electron/native listener 残留。
-5. 再次检查系统音频权限和 Voice listener 状态。
+四组对照（每组均为 ChatGPT 全新启动）：
 
-同一版本和同一 Automatic matcher 已成功与 ChatGPT Voice 同时运行，因此当前证据
-不支持“matcher 必然阻止 Voice”这一结论。更可能的方向包括：Electron 安装不完整、
-多个或残留的 Core Audio tap、启动顺序，以及 ChatGPT audio service 在 Voice 初始化
-时发生 PID 变化。
+| Persona | tap 目标 | 首次语音连接 |
+| --- | --- | --- |
+| 未运行 | — | 成功 |
+| 运行中 | `/usr/bin/afplay`（无关进程） | 成功 |
+| 运行中 | ChatGPT（Automatic） | 失败 |
+| 会话建立后才启动 | ChatGPT | 成功，口型正常 |
 
-若 Automatic 仍不稳定，可临时在 **Settings → Voice → Application** 中明确选择
-ChatGPT；需要隔离 native capture 时选择 **External**。
+第二行是隔离变量的关键：Persona 完整运行，唯一差异是 tap 挂在谁身上。
+
+之前"重启 ChatGPT 就好了"是个误导性的观察——起作用的不是重启本身，而是重启后
+Persona 需要几秒才匹配到新 PID，那段无 tap 的空窗期正好用来建立会话。
+
+修复后 native helper 改为：轮询 `kAudioProcessPropertyIsRunningOutput`（读这个属性
+不需要 tap），目标真正出声后才创建 tap，停声约 3 秒即释放，因此每一轮会话都在无 tap
+状态下协商。
+
+若在修复后的版本上仍然超时：
+
+1. 确认已重新编译：`npm run native:build && npm run native:test`。
+2. 完全退出 Persona，重试 ChatGPT Voice；若此时恢复，说明仍有 Persona 侧因素。
+3. 在 Activity Monitor 中确认没有多个 Persona/Electron/native listener 残留。
+4. 检查系统音频权限。
+5. 临时绕过：先连上语音，再启动 Persona；或在 **Settings → Voice → External**
+   中彻底隔离 native capture。
 
 ## 收集诊断证据
 
@@ -217,3 +251,17 @@ npm run demo
 ```
 
 手工确认模型加载、窗口缩放、ChatGPT Voice 连接、口型开合、退出重启和 MCP 状态。
+
+窗口穿透：在角色旁边打开任意应用，点击被角色窗口覆盖的透明区域，确认点击落到下方
+应用；再把指针移到角色身上，确认可以拖拽旋转。
+
+External 契约（不依赖进程匹配与 Core Audio）：在 **Settings → Voice** 中选择
+External，保持 Persona 运行，然后
+
+```bash
+node scripts/check-external-events.cjs
+```
+
+脚本会依次推送 listening、一段合成的说话电平、再回到 idle，并校验 `/health` 的最终
+状态。角色应当跟着张嘴和摆动。这条通道是 Automatic matcher 失效时的兜底路径,
+每次上游同步后值得跑一次。

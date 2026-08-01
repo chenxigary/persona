@@ -140,6 +140,7 @@ interface Window {
   personaBridge?: {
     getSnapshot(): Promise<AvatarBridgeEvent | null>;
     hide(): void;
+    setPointerRegion(pointerOverCharacter: boolean): void;
     subscribe(listener: (event: AvatarBridgeEvent) => void): () => void;
   };
   personaSettings?: {

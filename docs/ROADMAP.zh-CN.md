@@ -29,7 +29,8 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 | macOS 本地启动与 runbook | **Done** | Electron、权限、模型导入和故障处理已记录 |
 | ChatGPT/Codex 音量口型 | **In Progress** | 口型本身可用；曾因 process tap 阻断语音会话建立而首连必败，已修复（见下），待补 10 次冷启动验证 |
 | Listener 不干扰宿主应用 | **In Progress** | macOS 已修复并初步验证；Windows/Linux 未验证 |
-| 无 VRMA 程序化身体动作 | **In Progress** | 已实现为 Idle/Speaking 的自动 fallback，hook 本体尚无测试 |
+| 无 VRMA 程序化身体动作 | **In Progress** | 已实现为 Idle/Speaking 的自动 fallback，动作数学已抽成纯函数并覆盖测试，待人眼验收 |
+| 窗口点击穿透 | **In Progress** | 透明区域已可穿透，托盘可切换 Always interactive，待日常使用验证 |
 | 自定义 VRMA 动作库 | **Not Started** | 需要素材、兼容性和授权验证 |
 | External 事件契约验证 | **Not Started** | 已提升到 Next，作为进程匹配的对冲 |
 | 稳定的 macOS Persona.app | **Not Started** | 需要打包、权限回归和后续签名策略 |
@@ -58,7 +59,8 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 | Initiative | 结果 | 依赖 | 完成标准 |
 | --- | --- | --- | --- |
 | 程序化动作 fallback | 无 VRMA 时自动放下手臂、呼吸、摇摆和说话点头 | 标准 VRM Humanoid 骨骼 | Idle 和 Speaking 均无 T-pose；配置 VRMA 后自动让位 |
-| 程序化动作测试补齐 | hook 本体行为可回归，而不只是开关判定 | 假 humanoid 测试夹具 | 覆盖 delta 钳位、说话/静默分支，以及**禁用时骨骼还原到捕获的 rest 姿态** |
+| ~~程序化动作测试补齐~~ **已完成** | 动作数学抽为 `proceduralPose` / `advanceElapsed` / `applyPose` / `restorePose` 等纯函数并测试 | 无新增依赖 | 已覆盖 delta 钳位、说话与静默的差异、禁用时骨骼精确还原、缺失骨骼与无 humanoid |
+| 窗口不遮挡下层应用 | 角色旁边的应用照常可点，需要时又能抓住窗口调整 | `electron/window-interaction.cjs`、渲染层上报角色屏幕矩形 | 透明区域点击穿透；指针在角色上可旋转缩放；托盘 Always interactive 可整窗接管 |
 | Voice 稳定性回归 | 保持 ChatGPT Voice 与口型同时可用 | macOS 系统音频权限、单 Persona 实例 | 冷启动连续 10 次全部成功，无 Voice 启动超时；挂断后重连同样成立 |
 | 视觉调校 | Frieren 的大小、镜头、灯光和动作幅度自然 | 程序化动作稳定 | 桌面使用时不遮挡主要内容，动作无穿模或明显抖动 |
 | macOS 开发包验证 | 减少 Electron 安装和权限身份不稳定 | `npm run dist:mac` | 本机安装、重启、权限和 Voice 回归通过 |
@@ -69,7 +71,7 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 
 | Initiative | 预期价值 | 关键依赖 |
 | --- | --- | --- |
-| External 事件契约最小验证 | 自建管线 POST state + audio-level 跑通端到端，绕开进程匹配与 Core Audio tap 这一整类风险 | 协议已存在，只需一个最小发送端 |
+| External 事件契约最小验证 | 自建管线 POST state + audio-level 跑通端到端，绕开进程匹配与 Core Audio tap 这一整类风险 | **发送端已就绪**：`node scripts/check-external-events.cjs`，剩下的是接一条真实本地管线 |
 | Windows / Linux 干扰验证 | 确认 WASAPI loopback 与 `pw-record` 是否同样影响宿主 | 各平台一台可测机器 |
 | VRMA 动作库 | 更自然的 Idle、Speaking、Wave 和情绪动作 | 找到兼容且授权清楚的 VRMA 素材 |
 | 程序化动作设置 | 可调呼吸、点头、摇摆和手臂角度，可一键关闭 | Appearance 设置 schema 与持久化；**需要先定义每骨骼的仲裁规则**，现在是整体二选一 |
@@ -113,6 +115,7 @@ Later。交换条件是先获得一个无需 API Key、可稳定日常使用的�
 | ChatGPT 没有官方跨进程 Voice 事件 | matcher 依赖内部进程与 Core Audio | 保留 External events 并在 Next 验活；加强生命周期诊断 |
 | 程序化动作与模型体型不匹配 | 手臂穿模、幅度不自然 | 旋转基准本身可移植（用 `getNormalizedBoneNode()`，three-vrm 归一化骨骼是规范 T-pose 空间，与模型原始 rest pose 无关）；残留风险是**体型比例**，缓解方向是按比例缩放幅度或加碰撞检查，而非逐模型手调 |
 | 程序化动作与 VRMA 争夺骨骼 | 动作叠加或抽搐 | 当前是整体二选一，安全但粗糙；Next 引入可调设置前必须先定义每骨骼仲裁 |
+| 置顶窗口遮挡下层操作 | 角色覆盖区域的按钮点不到，桌面常驻变成负担 | 默认点击穿透，仅角色所在矩形接收指针；托盘提供整窗接管开关。判定用包围盒投影而非精确轮廓，边缘会略微保守 |
 | VRMA 素材兼容或授权不明 | 无法发布或动画异常 | 记录来源、许可和 Humanoid 兼容测试 |
 | LiteAvatar 资源消耗较高 | 桌面常驻体验变差 | 独立 adapter、性能预算、延后集成 |
 
@@ -121,6 +124,7 @@ Later。交换条件是先获得一个无需 API Key、可稳定日常使用的�
 - ChatGPT Voice 冷启动成功率达到连续 10 次中的 10 次；同一次运行内挂断重连同样 10/10。
 - 助手开始输出后，嘴部与身体在主观上立即响应，无明显停顿或抖动。
 - 无 VRMA 时不出现持续 T-pose；有 VRMA 时不与程序化动作争夺骨骼。
+- 角色常驻时，被其窗口覆盖的下层应用按钮依然可以直接点击。
 - Persona 自身不需要 OpenAI API Key，不保存或上传原始音频。（注意：当前形态仍
   依赖 ChatGPT 桌面端的登录与订阅——"无 API Key"不等于"无 OpenAI 依赖"，
   真正的解耦要等 External 管线。）

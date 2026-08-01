@@ -128,6 +128,7 @@ export function App() {
         modelUrl={defaultModel.asset_url}
         onAnimationComplete={handleAnimationComplete}
         playback={bodyOverride ? 'once' : 'loop'}
+        reportPointerRegion
         speaking={speaking}
       />
     </main>

@@ -39,6 +39,10 @@ const {
   resolveVoiceSourcePattern,
   settingsPatternFromVoiceSource,
 } = require("./voice-source.cjs");
+const {
+  WindowInteractionController,
+  applyInteractionToWindow,
+} = require("./window-interaction.cjs");
 
 const WINDOW_WIDTH = 430;
 const WINDOW_HEIGHT = 680;
@@ -68,6 +72,11 @@ let latestListenerStatus = null;
 let latestVoiceState = null;
 let audioListener = null;
 let tray = null;
+const windowInteraction = new WindowInteractionController();
+
+function syncWindowInteraction(change) {
+  applyInteractionToWindow(avatarWindow, change);
+}
 let hyprlandConfigured = false;
 let hyprlandConfiguring = false;
 let hyprlandConfigurationTimer = null;
@@ -268,6 +277,12 @@ function createWindow() {
   window.setAlwaysOnTop(true, "floating");
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.setOpacity(1);
+  // A fresh BrowserWindow accepts the pointer across its whole rectangle, which
+  // would swallow clicks aimed at the applications underneath the transparent
+  // area. Start pass-through and let the renderer re-enable interaction while
+  // the pointer is over the character.
+  windowInteraction.reset();
+  syncWindowInteraction(windowInteraction.resolve());
   window.once("ready-to-show", () => {
     if (window.isDestroyed()) return;
     positionWindow(window);
@@ -278,6 +293,8 @@ function createWindow() {
     window.setAlwaysOnTop(true, "floating");
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     window.setOpacity(1);
+    windowInteraction.reset();
+    syncWindowInteraction(windowInteraction.resolve());
     scheduleHyprlandWindowConfiguration({
       force: true,
       position: hyprlandLastPosition,
@@ -644,6 +661,21 @@ function refreshTrayMenu() {
         { label: "Settings…", click: showSettings },
         { type: "separator" },
         {
+          label: "Always interactive",
+          type: "checkbox",
+          checked: windowInteraction.mode === "always",
+          toolTip:
+            "Keep the whole Persona window clickable. Off means clicks pass " +
+            "through to the app underneath unless the pointer is on the character.",
+          click: (item) => {
+            syncWindowInteraction(
+              windowInteraction.setMode(item.checked ? "always" : "auto"),
+            );
+            refreshTrayMenu();
+          },
+        },
+        { type: "separator" },
+        {
           label: "Preview listening",
           click: () => handleBridgeEvent(voiceState("listening")),
         },
@@ -823,6 +855,12 @@ if (!app.requestSingleInstanceLock()) {
         settingsSnapshot: settingsStore.getSnapshot(),
       }),
     );
+    ipcMain.on("persona:pointer-region", (event, pointerOverCharacter) => {
+      if (avatarWindow?.webContents !== event.sender) return;
+      syncWindowInteraction(
+        windowInteraction.setPointerOverCharacter(pointerOverCharacter),
+      );
+    });
     ipcMain.on("persona:hide", () => void hideOverlay());
     // The resolved theme lives in renderer storage, so the window chrome can
     // only be corrected once the settings renderer reports it. Accepts the two

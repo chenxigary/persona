@@ -1,5 +1,11 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   ContactShadows,
   Environment,
@@ -10,7 +16,19 @@ import * as THREE from 'three';
 import { Avatar } from './Avatar';
 import type { PlayableAnimationType } from '../animation-catalog';
 import { calculateFullBodyFraming } from '../camera-framing';
+import {
+  isPointerInsideRect,
+  screenRectFromNdc,
+  type NdcPoint,
+  type ScreenRect,
+} from '../pointer-region';
 import { resolveLightingSettings } from '../settings-defaults';
+
+// The overlay window is far larger than the character it draws. Reporting where
+// the character actually is lets the main process keep the transparent
+// remainder click-through, so buttons in the app underneath stay reachable.
+const POINTER_REGION_PADDING = 16;
+const POINTER_REGION_FRAME_INTERVAL = 6;
 
 interface SceneProps {
   animation: PlayableAnimationType;
@@ -25,6 +43,8 @@ interface SceneProps {
   modelUrl: string;
   onAnimationComplete: () => void;
   playback: 'loop' | 'once';
+  /** Report the character's screen rectangle so the overlay can stay click-through. */
+  reportPointerRegion?: boolean;
   speaking: boolean;
 }
 
@@ -133,6 +153,72 @@ function FullBodyCamera({
   return null;
 }
 
+function PointerRegionReporter({ object }: { object: THREE.Object3D | null }) {
+  const camera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const rect = useRef<ScreenRect | null>(null);
+  const reported = useRef<boolean | null>(null);
+  const frame = useRef(0);
+  const box = useRef(new THREE.Box3());
+  const corner = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    // Electron forwards mouse moves while the window ignores mouse events, so
+    // the renderer can still tell when the pointer crosses the character.
+    const handleMove = (event: MouseEvent) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+    };
+    const handleLeave = () => {
+      pointer.current = null;
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseleave', handleLeave);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseleave', handleLeave);
+      // Never leave the window holding the pointer after the scene goes away.
+      window.personaBridge?.setPointerRegion(false);
+    };
+  }, []);
+
+  useFrame(() => {
+    frame.current += 1;
+    if (frame.current % POINTER_REGION_FRAME_INTERVAL !== 0) return;
+
+    if (object) {
+      object.updateWorldMatrix(true, true);
+      box.current.setFromObject(object);
+      if (box.current.isEmpty()) {
+        rect.current = null;
+      } else {
+        const points: NdcPoint[] = [];
+        for (const x of [box.current.min.x, box.current.max.x]) {
+          for (const y of [box.current.min.y, box.current.max.y]) {
+            for (const z of [box.current.min.z, box.current.max.z]) {
+              corner.current.set(x, y, z).project(camera);
+              points.push({ x: corner.current.x, y: corner.current.y });
+            }
+          }
+        }
+        rect.current = screenRectFromNdc(points, size, POINTER_REGION_PADDING);
+      }
+    } else {
+      rect.current = null;
+    }
+
+    const position = pointer.current;
+    const over = position
+      ? isPointerInsideRect(position.x, position.y, rect.current)
+      : false;
+    if (over === reported.current) return;
+    reported.current = over;
+    window.personaBridge?.setPointerRegion(over);
+  });
+
+  return null;
+}
+
 export function Scene(props: SceneProps) {
   const lighting = resolveLightingSettings(props.lighting);
   const [avatarScene, setAvatarScene] = useState<THREE.Object3D | null>(null);
@@ -192,6 +278,9 @@ export function Scene(props: SceneProps) {
         object={avatarScene}
       />
       <Avatar {...props} onReady={handleAvatarReady} />
+      {props.reportPointerRegion && (
+        <PointerRegionReporter object={avatarScene} />
+      )}
       {props.groundShadow && grounding && (
         <ContactShadows
           blur={2.4}
