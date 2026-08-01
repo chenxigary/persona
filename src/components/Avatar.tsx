@@ -5,10 +5,7 @@ import { useVrmLoader } from '../hooks/useVrmLoader';
 import { useVrmAnimation } from '../hooks/useVrmAnimation';
 import { useAmplitudeLipSync } from '../hooks/useAmplitudeLipSync';
 import { useBlink } from '../hooks/useBlink';
-import {
-  shouldUseProceduralMotion,
-  useProceduralMotion,
-} from '../hooks/useProceduralMotion';
+import { useProceduralMotion } from '../hooks/useProceduralMotion';
 import type { PlayableAnimationType } from '../animation-catalog';
 
 interface AvatarProps {
@@ -35,7 +32,11 @@ function AvatarModel({
   onReady,
 }: AvatarProps) {
   const vrm = useVrmLoader(modelUrl);
-  const { play, update: updateAnimation } = useVrmAnimation(vrm);
+  const {
+    getAnimationWeight,
+    play,
+    update: updateAnimation,
+  } = useVrmAnimation(vrm);
   const updateLipSync = useAmplitudeLipSync(vrm);
   const updateBlink = useBlink(vrm);
   const updateProceduralMotion = useProceduralMotion(vrm);
@@ -62,11 +63,10 @@ function AvatarModel({
   useFrame((_, delta) => {
     if (!vrm) return;
     updateAnimation(delta);
-    updateProceduralMotion(
-      delta,
-      speaking,
-      shouldUseProceduralMotion(animationUrls),
-    );
+    // Take over exactly the share of the pose no VRMA clip is driving. While a
+    // clip loads or fades this is a partial blend, which is what keeps the
+    // model from snapping into its T-pose between animations.
+    updateProceduralMotion(delta, speaking, 1 - getAnimationWeight());
     updateBlink(delta);
     updateLipSync(delta, audioLevel, speaking);
     vrm.update(delta);

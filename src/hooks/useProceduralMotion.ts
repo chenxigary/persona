@@ -47,13 +47,20 @@ export type BonePose = Readonly<
 interface PoseScratch {
   euler: THREE.Euler;
   offset: THREE.Quaternion;
+  target: THREE.Quaternion;
 }
 
 function createScratch(): PoseScratch {
   return {
     euler: new THREE.Euler(0, 0, 0, 'XYZ'),
     offset: new THREE.Quaternion(),
+    target: new THREE.Quaternion(),
   };
+}
+
+export function clampBlend(blend: number): number {
+  if (!Number.isFinite(blend)) return 0;
+  return Math.max(0, Math.min(1, blend));
 }
 
 export function shouldUseProceduralMotion(
@@ -106,18 +113,34 @@ export function captureBones(vrm: VRM | null): Map<MotionBone, BoneState> {
   return bones;
 }
 
+/**
+ * Blends the fallback pose over whatever is already on the bones.
+ *
+ * `blend` is how much of the procedural pose to take: 1 replaces the bone
+ * outright, 0 leaves it alone, and values in between interpolate. Callers pass
+ * the inverse of the VRMA mixer's weight so the two never fight — the fallback
+ * recedes exactly as a clip fades in, and returns as it fades out.
+ */
 export function applyPose(
   bones: ReadonlyMap<MotionBone, BoneState>,
   pose: BonePose,
+  blend = 1,
   scratch: PoseScratch = createScratch(),
 ): void {
+  const amount = clampBlend(blend);
+  if (amount === 0) return;
   for (const name of MOTION_BONES) {
     const bone = bones.get(name);
     if (!bone) continue;
     const [x, y, z] = pose[name];
     scratch.euler.set(x, y, z, 'XYZ');
     scratch.offset.setFromEuler(scratch.euler);
-    bone.node.quaternion.copy(bone.rotation).multiply(scratch.offset);
+    scratch.target.copy(bone.rotation).multiply(scratch.offset);
+    if (amount >= 1) {
+      bone.node.quaternion.copy(scratch.target);
+    } else {
+      bone.node.quaternion.slerp(scratch.target, amount);
+    }
   }
 }
 
@@ -141,9 +164,12 @@ export function useProceduralMotion(vrm: VRM | null) {
   }, [vrm]);
 
   return useCallback(
-    (delta: number, speaking: boolean, enabled: boolean) => {
+    (delta: number, speaking: boolean, blend: number) => {
       if (!vrm?.humanoid) return;
-      if (!enabled) {
+      const amount = clampBlend(blend);
+      if (amount === 0) {
+        // A clip owns the bones now. Hand back any bone the clip does not
+        // animate, so a partial VRMA cannot strand it in the fallback pose.
         if (wasEnabled.current) restorePose(bones.current);
         wasEnabled.current = false;
         return;
@@ -154,6 +180,7 @@ export function useProceduralMotion(vrm: VRM | null) {
       applyPose(
         bones.current,
         proceduralPose(elapsed.current, speaking),
+        amount,
         scratch.current,
       );
     },

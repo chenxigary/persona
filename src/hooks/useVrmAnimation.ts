@@ -48,6 +48,10 @@ export function useVrmAnimation(vrm: VRM | null) {
   );
   const requestGeneration = useRef(0);
   const pendingCompletion = useRef<PendingCompletion | null>(null);
+  // Retained purely so the caller can see a clip that is still fading out.
+  // current.current is cleared the moment a fade-out starts, but the mixer keeps
+  // driving those bones for the rest of the transition.
+  const fading = useRef<THREE.AnimationAction | null>(null);
 
   useEffect(() => {
     if (!vrm) return;
@@ -73,6 +77,7 @@ export function useVrmAnimation(vrm: VRM | null) {
       current.current = null;
       currentType.current = null;
       pendingCompletion.current = null;
+      fading.current = null;
       animationHistory.clear();
     };
   }, [vrm]);
@@ -112,6 +117,7 @@ export function useVrmAnimation(vrm: VRM | null) {
         if (!url) {
           const fadeSeconds = transitionSeconds(currentType.current, type);
           current.current?.fadeOut(fadeSeconds);
+          fading.current = current.current;
           current.current = null;
           currentType.current = type;
           if (playback === 'once') onComplete?.();
@@ -134,6 +140,7 @@ export function useVrmAnimation(vrm: VRM | null) {
           }
         }
         crossFadeAnimationActions(current.current, action, fadeSeconds);
+        fading.current = current.current;
         current.current = action;
         currentType.current = type;
       } catch (error) {
@@ -147,5 +154,28 @@ export function useVrmAnimation(vrm: VRM | null) {
   );
 
   const update = useCallback((delta: number) => mixer.current?.update(delta), []);
-  return { play, update };
+
+  /**
+   * How strongly a VRMA clip is driving the rig right now, 0 to 1.
+   *
+   * This deliberately reads the mixer rather than the configured clip list. A
+   * clip is only loaded and faded in asynchronously, so the configured list
+   * flips to "has animation" well before anything actually moves the bones —
+   * long enough to strand the model in its normalised T-pose while the file
+   * loads. Reporting live weight lets the procedural fallback hold the pose
+   * until the clip genuinely takes over, and reclaim it as the clip fades out.
+   */
+  const getAnimationWeight = useCallback(() => {
+    const weightOf = (action: THREE.AnimationAction | null) => {
+      if (!action) return 0;
+      const weight = action.getEffectiveWeight();
+      return Number.isFinite(weight) ? Math.max(0, Math.min(1, weight)) : 0;
+    };
+    const active = weightOf(current.current);
+    const outgoing = weightOf(fading.current);
+    if (outgoing === 0) fading.current = null;
+    return Math.max(active, outgoing);
+  }, []);
+
+  return { getAnimationWeight, play, update };
 }

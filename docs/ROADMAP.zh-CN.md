@@ -31,7 +31,8 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 | Listener 不干扰宿主应用 | **In Progress** | macOS 已修复并初步验证；Windows/Linux 未验证 |
 | 无 VRMA 程序化身体动作 | **In Progress** | 已实现为 Idle/Speaking 的自动 fallback，动作数学已抽成纯函数并覆盖测试，待人眼验收 |
 | 窗口点击穿透 | **In Progress** | 透明区域已可穿透，托盘可切换 Always interactive，待日常使用验证 |
-| 自定义 VRMA 动作库 | **Not Started** | 需要素材、兼容性和授权验证 |
+| 动作过渡不闪 T-pose | **In Progress** | 已改为按 mixer 权重加权混合，待导入 VRMA 后人眼验收 |
+| 自定义 VRMA 动作库 | **In Progress** | pixiv VRoid Motion Pack（7 个一次性动作）已验证格式与许可；程序化动作与 VRMA 的混合已修复，待实际导入与观感验收 |
 | External 事件契约验证 | **Not Started** | 已提升到 Next，作为进程匹配的对冲 |
 | 稳定的 macOS Persona.app | **Not Started** | 需要打包、权限回归和后续签名策略 |
 | LiteAvatar renderer | **Not Started** | 等 Persona 事件契约稳定后开始 |
@@ -114,9 +115,9 @@ Later。交换条件是先获得一个无需 API Key、可稳定日常使用的�
 | **Persona 的采集行为改变宿主应用** | 已实证：tap 存在时 ChatGPT 语音会话无法建立 | 已按"出声才挂、停声即放"修复；任何触碰 listener 或新增 renderer 的改动都必须重跑冷启动回归 |
 | ChatGPT 没有官方跨进程 Voice 事件 | matcher 依赖内部进程与 Core Audio | 保留 External events 并在 Next 验活；加强生命周期诊断 |
 | 程序化动作与模型体型不匹配 | 手臂穿模、幅度不自然 | 旋转基准本身可移植（用 `getNormalizedBoneNode()`，three-vrm 归一化骨骼是规范 T-pose 空间，与模型原始 rest pose 无关）；残留风险是**体型比例**，缓解方向是按比例缩放幅度或加碰撞检查，而非逐模型手调 |
-| 程序化动作与 VRMA 争夺骨骼 | 动作叠加或抽搐 | 当前是整体二选一，安全但粗糙；Next 引入可调设置前必须先定义每骨骼仲裁 |
+| 程序化动作与 VRMA 争夺骨骼 | 动作叠加、抽搐，或切换瞬间闪回 T-pose | **已修复**：不再按"是否配置了 clip"整体二选一，而是按 mixer 的实时权重加权混合。原实现在 clip 异步加载和淡入淡出期间会把骨骼还原到归一化 T-pose，产生可见闪烁 |
 | 置顶窗口遮挡下层操作 | 角色覆盖区域的按钮点不到，桌面常驻变成负担 | 默认点击穿透，仅角色所在矩形接收指针；托盘提供整窗接管开关。判定用包围盒投影而非精确轮廓，边缘会略微保守 |
-| VRMA 素材兼容或授权不明 | 无法发布或动画异常 | 记录来源、许可和 Humanoid 兼容测试 |
+| VRMA 素材授权限制分发 | 可用于本地，但不能随安装包发布 | pixiv VRoid Motion Pack 禁止以可提取形式再分发：用户自行导入可以，放进 `public/assets/animations/` 并标 `distributionAllowed: true` 不行。打包用素材仍需另找 |
 | LiteAvatar 资源消耗较高 | 桌面常驻体验变差 | 独立 adapter、性能预算、延后集成 |
 
 ## 成功指标

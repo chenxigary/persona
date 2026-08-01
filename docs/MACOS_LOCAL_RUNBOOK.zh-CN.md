@@ -93,6 +93,50 @@ Persona 的文件选择器要求 `.vrm` 扩展名。如果下载文件名是
 3. 角色占屏太大时，在 **Settings → Appearance** 中调小 character size,判定区域
    会跟着缩小。
 
+## 导入 VRMA 动作
+
+Settings → **Actions** 里管理动作。Persona 永远提供 **Idle** 和 **Speaking** 两个固定
+槽位，其余是自定义动作——自定义动作的名称、描述和触发场景会写进 MCP 工具描述，
+连接的 agent 据此决定何时播放。
+
+导入步骤：
+
+1. 打开 Settings → Actions。
+2. 新建自定义动作，填写名称、描述、触发场景。
+3. 在该动作下 **Add clips**，在文件选择器里选 `.vrma` 文件（可多选）。
+4. 文件会被校验（glTF 2 二进制 + `.vrma` 后缀）并复制进 Persona 的应用数据目录，
+   原文件可以随便移动或删除。
+
+一个动作可以包含多个 clip，播放时随机选一个。
+
+### pixiv VRoid Motion Pack 的建议映射
+
+`VRMA_MotionPack` 里的 7 个动作都是**一次性演示动作**，不是循环待机动画：
+
+| 文件 | 内容 | 建议 |
+| --- | --- | --- |
+| VRMA_01 | Show full body | 自定义 `show-full-body` |
+| VRMA_02 | Greeting | 自定义 `greeting`，触发场景写"打招呼、对话开始" |
+| VRMA_03 | Peace sign | 自定义 `peace` |
+| VRMA_04 | Shoot | 自定义 `finger-gun` |
+| VRMA_05 | Spin | 自定义 `spin` |
+| VRMA_06 | Model pose | 自定义 `pose` |
+| VRMA_07 | Squat | 自定义 `squat` |
+
+**建议 Idle 和 Speaking 都保持为空。** 这两个槽位是长时间循环的，塞一个一次性动作
+进去会不断重播，观感很怪；留空则由程序化动作接管，提供呼吸、摇摆和说话点头。
+这些 VRMA 更适合当作 MCP 可触发的一次性动作。
+
+### 许可注意
+
+该动作包版权属于 pixiv Inc.，可自由使用（含商用），但要求署名
+"Animation credits to pixiv Inc.'s VRoid Project"，并且**禁止以可被提取或重新绑定的
+形式再分发**。
+
+因此：用户自行导入没有问题（文件存在本机应用数据目录，不参与分发）；但**不要**把
+它们放进 `public/assets/animations/` 并在 `manifest.json` 里标记
+`distributionAllowed: true`——那等于随安装包再分发，超出许可范围。
+
 ## 系统音频权限
 
 进入：
@@ -254,6 +298,10 @@ npm run demo
 
 窗口穿透：在角色旁边打开任意应用，点击被角色窗口覆盖的透明区域，确认点击落到下方
 应用；再把指针移到角色身上，确认可以拖拽旋转。
+
+动作切换无 T-pose：给某个动作配一个 VRMA，然后在配了 clip 的动作与没配 clip 的动作
+之间来回切换（例如用托盘的 Preview speaking / Preview listening）。角色应当平滑过渡，
+**任何时刻都不应出现双臂平举的 T-pose 闪烁**，尤其是某个 clip 第一次播放时。
 
 External 契约（不依赖进程匹配与 Core Audio）：在 **Settings → Voice** 中选择
 External，保持 Persona 运行，然后

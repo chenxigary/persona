@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   advanceElapsed,
   applyPose,
+  clampBlend,
   captureBones,
   MAX_FRAME_DELTA,
   MOTION_BONES,
@@ -132,6 +133,19 @@ describe('captureBones', () => {
   });
 });
 
+describe('clampBlend', () => {
+  it('keeps the blend inside the unit range', () => {
+    expect(clampBlend(0.4)).toBe(0.4);
+    expect(clampBlend(-3)).toBe(0);
+    expect(clampBlend(9)).toBe(1);
+  });
+
+  it('treats a non-finite blend as fully yielding, never as full takeover', () => {
+    expect(clampBlend(Number.NaN)).toBe(0);
+    expect(clampBlend(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
+
 describe('applyPose and restorePose', () => {
   function poseBones(): {
     bones: Map<MotionBone, BoneState>;
@@ -189,13 +203,68 @@ describe('applyPose and restorePose', () => {
     expect(() => restorePose(bones)).not.toThrow();
   });
 
+  it('leaves the bones to the clip at blend 0', () => {
+    const { bones, nodes } = poseBones();
+    const posed = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(0.9, 0.1, -0.4, 'XYZ'),
+    );
+    // Stand in for what the VRMA mixer wrote this frame.
+    for (const node of nodes.values()) node.quaternion.copy(posed);
+
+    applyPose(bones, proceduralPose(1.5, false), 0);
+
+    for (const node of nodes.values()) {
+      expect(node.quaternion.angleTo(posed)).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('lands between the clip pose and the fallback at a partial blend', () => {
+    const { bones, nodes } = poseBones();
+    const posed = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(0.9, 0.1, -0.4, 'XYZ'),
+    );
+    const arm = nodes.get('leftUpperArm')!;
+    arm.quaternion.copy(posed);
+
+    const full = poseBones();
+    applyPose(full.bones, proceduralPose(1.5, false), 1);
+    const fallback = full.nodes.get('leftUpperArm')!.quaternion.clone();
+
+    applyPose(bones, proceduralPose(1.5, false), 0.5);
+
+    // Strictly between the two ends: this is the crossfade that stops the model
+    // snapping into its T-pose while a clip loads or fades.
+    const toClip = arm.quaternion.angleTo(posed);
+    const toFallback = arm.quaternion.angleTo(fallback);
+    expect(toClip).toBeGreaterThan(0.01);
+    expect(toFallback).toBeGreaterThan(0.01);
+    expect(toClip).toBeLessThan(posed.angleTo(fallback));
+    expect(toFallback).toBeLessThan(posed.angleTo(fallback));
+  });
+
+  it('moves further toward the fallback as the blend rises', () => {
+    const posed = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(0.9, 0.1, -0.4, 'XYZ'),
+    );
+    const distances = [0.25, 0.5, 0.9].map((blend) => {
+      const { bones, nodes } = poseBones();
+      const arm = nodes.get('leftUpperArm')!;
+      arm.quaternion.copy(posed);
+      applyPose(bones, proceduralPose(1.5, false), blend);
+      return arm.quaternion.angleTo(posed);
+    });
+    expect(distances[1]).toBeGreaterThan(distances[0]);
+    expect(distances[2]).toBeGreaterThan(distances[1]);
+  });
+
   it('reuses caller scratch objects without leaking state between bones', () => {
     const { bones, nodes } = poseBones();
     const scratch = {
       euler: new THREE.Euler(0, 0, 0, 'XYZ'),
       offset: new THREE.Quaternion(),
+      target: new THREE.Quaternion(),
     };
-    applyPose(bones, proceduralPose(1.1, false), scratch);
+    applyPose(bones, proceduralPose(1.1, false), 1, scratch);
     const withScratch = nodes.get('leftLowerArm')!.quaternion.clone();
 
     restorePose(bones);
