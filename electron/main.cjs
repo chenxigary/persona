@@ -107,7 +107,19 @@ protocol.registerSchemesAsPrivileged([
 app.setName("Persona");
 
 function debugLog(...values) {
-  if (debugEnabled) console.error("[persona]", ...values);
+  if (!debugEnabled) return;
+  // One line per entry, with a timestamp, so a run can be replayed and checked
+  // mechanically. console.error pretty-prints objects across several lines,
+  // which makes the listener's lifecycle impossible to parse after the fact.
+  const parts = values.map((value) => {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  });
+  console.error(`[persona] ${new Date().toISOString()} ${parts.join(" ")}`);
 }
 
 function positionWindow(window) {

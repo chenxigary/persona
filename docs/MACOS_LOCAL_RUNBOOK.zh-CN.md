@@ -303,6 +303,21 @@ npm run demo
 之间来回切换（例如用托盘的 Preview speaking / Preview listening）。角色应当平滑过渡，
 **任何时刻都不应出现双臂平举的 T-pose 闪烁**，尤其是某个 clip 第一次播放时。
 
+Listener 不变量（**推荐用这个代替手工数 10 次冷启动**）：带日志跑一段正常使用，
+然后让脚本判定。
+
+```bash
+PERSONA_DEBUG=1 npm run demo 2>&1 | tee /tmp/persona.log
+# 正常用语音应用几分钟，来回说几轮，然后 Control-C
+node scripts/check-listener-invariants.cjs /tmp/persona.log
+```
+
+脚本检查三条：tap 重建频率（旧 bug 是 20 秒 10 次）、**每次 tap 期间是否真的有说话**
+（在目标静默时挂 tap 正是阻断语音会话建立的条件）、以及说话结束后是否及时释放。
+
+这比数 10 次连接更可靠：手工计数只观察症状，而脚本直接验证造成症状的机制。
+样本要够——至少来回说三四轮，脚本会在样本不足时明确说"不判定"而不是给个假通过。
+
 External 契约（不依赖进程匹配与 Core Audio）：在 **Settings → Voice** 中选择
 External，保持 Persona 运行，然后
 
