@@ -36,14 +36,16 @@ Requirements:
 - Node.js 24 or newer
 - npm
 - A desktop session with hardware-accelerated graphics
+- On macOS: macOS 14.2+ and Xcode Command Line Tools
 
 The packaged character catalog is intentionally empty while the distributable
 defaults are being selected. Persona opens Settings on first launch so you can
 import a local `.vrm` model; ignored media files under `public/assets/` are not
 loaded unless they are declared in the catalog.
 
-To exercise the packaged-library path with the current ignored local test
-media, copy the provided examples over the active empty catalogs:
+The example catalogs reference ignored local test media that is not included in
+a clean clone. Only copy them when those referenced model and animation files
+already exist locally:
 
 ```bash
 cp public/assets/library.json.example public/assets/library.json
@@ -61,11 +63,21 @@ model record as the packaged default.
 
 ```bash
 npm install
+npm run native:build
+npm run native:test
 npm run demo
 ```
 
 `npm run demo` builds the current renderer and launches Persona with normal
-automatic voice-output detection.
+automatic voice-output detection. The native build and self-test are required
+when running from source on macOS and Windows; the native build is a no-op on
+Linux.
+
+On first launch, import a local `.vrm` file in Settings. The first imported
+model becomes the default and enables the character window and voice listener.
+For a tested macOS setup, System Audio Recording permission, Electron recovery,
+and ChatGPT Voice troubleshooting, follow the [macOS local
+runbook](docs/MACOS_LOCAL_RUNBOOK.zh-CN.md).
 
 For a background launch:
 
