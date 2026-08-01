@@ -9,6 +9,13 @@ const { normalizeVoiceSource } = require("./voice-source.cjs");
 
 const SESSION_IDLE_MS = 8_000;
 
+// Multi-process voice applications (Electron and Chromium based clients in
+// particular) start and stop short-lived helper processes continuously. Those
+// helpers rarely own a Core Audio process object, so rebuilding the tap for
+// every membership change destroys and recreates the aggregate device without
+// changing what is actually metered. Coalesce that churn.
+const REATTACH_COOLDOWN_MS = 5_000;
+
 function helperExecutableName(platform) {
   return platform === "win32" ? "persona-audio-listener.exe" : "persona-audio-listener";
 }
@@ -59,6 +66,8 @@ class NativeProcessAudioListener {
     pollIntervalMs = 1_500,
     sessionIdleMs = SESSION_IDLE_MS,
     speechReleaseMs = DEFAULT_SPEECH_RELEASE_MS,
+    reattachCooldownMs = REATTACH_COOLDOWN_MS,
+    now = () => Date.now(),
     processPattern = null,
     voiceSource = null,
   } = {}) {
@@ -75,8 +84,11 @@ class NativeProcessAudioListener {
     this.onStatus = onStatus;
     this.pollIntervalMs = pollIntervalMs;
     this.sessionIdleMs = sessionIdleMs;
+    this.reattachCooldownMs = reattachCooldownMs;
+    this.now = now;
     this.capture = null;
-    this.captureKey = null;
+    this.capturePids = [];
+    this.lastAttachAt = 0;
     this.pollTimer = null;
     this.sessionTimer = null;
     this.sessionActive = false;
@@ -134,14 +146,17 @@ class NativeProcessAudioListener {
       if (this.stopped) return;
       const selectedPids =
         this.platform === "win32" ? processes.rootPids.slice(0, 1) : processes.pids;
-      const key = selectedPids.join(",");
-      if (!key) {
+      if (!selectedPids.length) {
         this.detach();
         return;
       }
-      if (this.capture && this.captureKey === key) return;
+      if (!this.capture) {
+        this.startCapture(selectedPids);
+        return;
+      }
+      if (!this.shouldReattach(selectedPids)) return;
       this.detach({ sessionEnded: false });
-      this.startCapture(selectedPids, key);
+      this.startCapture(selectedPids);
     } catch (error) {
       this.reportStatus({
         available: true,
@@ -155,14 +170,38 @@ class NativeProcessAudioListener {
     }
   }
 
-  startCapture(processIds, key) {
+  shouldReattach(selectedPids) {
+    const current = new Set(selectedPids);
+    const retained = this.capturePids.filter((processId) => current.has(processId));
+    // Everything we handed to the helper is gone, so the tap can no longer be
+    // metering the target. Reattach immediately.
+    if (!retained.length) return true;
+    // Membership is identical: nothing to do.
+    if (
+      retained.length === this.capturePids.length &&
+      selectedPids.length === this.capturePids.length
+    ) {
+      return false;
+    }
+    // A voice session is in flight, so the current tap is demonstrably carrying
+    // the audio we care about. Rebuilding it now would interrupt the aggregate
+    // device and reset animation state mid-sentence.
+    if (this.sessionActive) return false;
+    // The set drifted while we are still tapping live processes. Rebuilding the
+    // Core Audio tap here is disruptive, so wait out the cooldown and pick the
+    // accumulated drift up in a single reattach.
+    return this.now() - this.lastAttachAt >= this.reattachCooldownMs;
+  }
+
+  startCapture(processIds) {
     const args = processIds.flatMap((processId) => ["--pid", String(processId)]);
     const child = this.spawnProcess(this.helperPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     this.capture = child;
-    this.captureKey = key;
+    this.capturePids = [...processIds];
+    this.lastAttachAt = this.now();
     const parse = createNdjsonParser(
       (message) => this.handleHelperMessage(child, message),
       (line) => this.onDebug?.("native listener emitted invalid JSON", line),
@@ -172,7 +211,7 @@ class NativeProcessAudioListener {
     child.once("error", (error) => {
       if (this.capture !== child) return;
       this.capture = null;
-      this.captureKey = null;
+      this.capturePids = [];
       this.reportStatus({
         available: false,
         capturing: false,
@@ -184,7 +223,7 @@ class NativeProcessAudioListener {
     child.once("exit", (code, signal) => {
       if (this.capture !== child) return;
       this.capture = null;
-      this.captureKey = null;
+      this.capturePids = [];
       this.gate.reset();
       this.reportStatus({
         available: true,
@@ -248,7 +287,7 @@ class NativeProcessAudioListener {
     if (this.capture) {
       const child = this.capture;
       this.capture = null;
-      this.captureKey = null;
+      this.capturePids = [];
       child.kill();
     }
     this.gate.reset();
@@ -272,6 +311,7 @@ class NativeProcessAudioListener {
 
 module.exports = {
   NativeProcessAudioListener,
+  REATTACH_COOLDOWN_MS,
   SESSION_IDLE_MS,
   createNdjsonParser,
   helperExecutableName,

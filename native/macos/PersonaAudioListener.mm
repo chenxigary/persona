@@ -172,6 +172,14 @@ int main(int argc, const char *argv[]) {
     }
     if (processIds.empty()) return fail(@"At least one --pid is required.");
 
+    // Install the signal handlers before creating any Core Audio object. Persona
+    // terminates the helper whenever it reattaches, and under the default
+    // SIGTERM disposition that kill can land between
+    // AudioHardwareCreateProcessTap and the teardown at the end of main, leaking
+    // the tap and its private aggregate device.
+    signal(SIGINT, handleSignal);
+    signal(SIGTERM, handleSignal);
+
     const auto processObjects = audioProcessObjects(processIds);
     if (processObjects.empty()) {
       return fail(@"No active Core Audio process matches the requested application.");
@@ -261,8 +269,17 @@ int main(int argc, const char *argv[]) {
         status = readStatus != noErr ? readStatus : kAudioHardwareBadObjectError;
       }
       if (status == noErr) break;
+      if (!running.load(std::memory_order_relaxed)) break;
       if (std::chrono::steady_clock::now() >= formatDeadline) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    // Terminated while waiting for the tapped stream to appear. Release the
+    // objects we already created instead of leaving them behind.
+    if (!running.load(std::memory_order_relaxed)) {
+      AudioHardwareDestroyAggregateDevice(aggregateID);
+      AudioHardwareDestroyProcessTap(tapID);
+      return 0;
     }
 
     if (status != noErr) {
@@ -281,8 +298,6 @@ int main(int argc, const char *argv[]) {
       return fail(@"Unable to start the Core Audio output meter.", status);
     }
 
-    signal(SIGINT, handleSignal);
-    signal(SIGTERM, handleSignal);
     emitJSON(@{@"type" : @"ready", @"source" : @"macOS process audio"});
 
     while (running.load(std::memory_order_relaxed)) {
