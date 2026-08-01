@@ -5,6 +5,10 @@ import { useVrmLoader } from '../hooks/useVrmLoader';
 import { useVrmAnimation } from '../hooks/useVrmAnimation';
 import { useAmplitudeLipSync } from '../hooks/useAmplitudeLipSync';
 import { useBlink } from '../hooks/useBlink';
+import {
+  shouldUseProceduralMotion,
+  useProceduralMotion,
+} from '../hooks/useProceduralMotion';
 import type { PlayableAnimationType } from '../animation-catalog';
 
 interface AvatarProps {
@@ -34,6 +38,7 @@ function AvatarModel({
   const { play, update: updateAnimation } = useVrmAnimation(vrm);
   const updateLipSync = useAmplitudeLipSync(vrm);
   const updateBlink = useBlink(vrm);
+  const updateProceduralMotion = useProceduralMotion(vrm);
 
   useEffect(() => {
     void play(animation, {
@@ -57,6 +62,11 @@ function AvatarModel({
   useFrame((_, delta) => {
     if (!vrm) return;
     updateAnimation(delta);
+    updateProceduralMotion(
+      delta,
+      speaking,
+      shouldUseProceduralMotion(animationUrls),
+    );
     updateBlink(delta);
     updateLipSync(delta, audioLevel, speaking);
     vrm.update(delta);

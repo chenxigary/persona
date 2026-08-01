@@ -97,10 +97,12 @@ start its voice-output listener. The first imported model becomes the default
 automatically.
 
 Persona always provides **Idle** and **Speaking** action slots. They begin
-without media, so the model keeps its normal pose until you add clips. Each
-action can contain multiple `.vrma` files; uploads receive numbered names such
-as `idle1`, `idle2`, `speaking1`, or `wave1`. Persona chooses a clip from the
-action whenever that action runs.
+without media, so Persona supplies a lightweight procedural fallback: it lowers
+T-pose arms, adds breathing and sway, and adds subtle speaking nods. Each action
+can contain multiple `.vrma` files; uploads receive numbered names such as
+`idle1`, `idle2`, `speaking1`, or `wave1`. Persona chooses a clip from the action
+whenever that action runs, and the configured clip automatically replaces the
+procedural fallback for that action.
 
 Custom actions include a name, description, and trigger scenario. Persona adds
 that metadata to its MCP animation tool so a connected agent can understand
@@ -212,6 +214,7 @@ More detail:
 
 - [Architecture and development](docs/DEVELOPMENT.md)
 - [Codex and integration API](docs/INTEGRATIONS.md)
+- [Product roadmap](docs/ROADMAP.zh-CN.md)
 - [Release process](docs/RELEASING.md)
 - [Security policy](SECURITY.md)
 

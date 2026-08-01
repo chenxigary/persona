@@ -101,8 +101,9 @@ Persona 只计算目标进程输出的归一化音量，不录制麦克风、不
 6. 点击 Voice 页的状态检查，确认 listener 为 available/capturing。
 
 口型是音量驱动，不是音素级 viseme：它能同步开合强弱，但不会精确区分
-“a/i/u/e/o”嘴形。身体动作还需要为 Idle/Speaking 导入 `.vrma` 动画；没有
-VRMA 时模型保持原始姿势是预期行为。
+“a/i/u/e/o”嘴形。Idle/Speaking 没有 `.vrma` 时，Persona 会自动启用轻量程序化
+动作，包括手臂放下、呼吸、轻微摇摆、头部运动和说话点头。导入 `.vrma` 后，
+对应 action 的程序化动作会自动让位给动画文件。
 
 ## Codex MCP
 

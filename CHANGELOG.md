@@ -5,6 +5,8 @@
 Persona's first beta is under active development.
 
 - Realtime character animation and amplitude-driven lip sync.
+- Procedural breathing, sway, relaxed arms, and speaking nods when an action has
+  no configured VRMA clip.
 - PipeWire, WASAPI process-loopback, and Core Audio process-tap listeners.
 - Configurable voice sources with automatic detection, application and Linux
   playback-stream selection, cross-platform regex matching, and external events.

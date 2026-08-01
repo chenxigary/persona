@@ -60,7 +60,10 @@ An empty packaged catalog is a supported first-run state. The application opens
 Settings and does not create the avatar window or start the audio listener until
 the merged snapshot has a valid `default_model_id`. Importing the first user
 model selects it automatically. Empty Idle or Speaking actions use an empty
-animation URL list, which leaves the VRM in its normal pose.
+animation URL list, which activates the renderer's lightweight
+procedural-motion fallback. The fallback lowers T-pose arms and adds breathing,
+sway, head motion, and speaking nods. A configured VRMA clip takes priority for
+its action and disables the fallback until that action becomes empty again.
 
 ## MCP contract
 
