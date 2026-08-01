@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("personaBridge", {
   getSnapshot: () => ipcRenderer.invoke("persona:get-snapshot"),
   hide: () => ipcRenderer.send("persona:hide"),
+  resizeWindow: (size) => ipcRenderer.send("persona:resize-window", size),
+  showSettings: () => ipcRenderer.send("persona:show-settings"),
   setPointerRegion: (pointerOverCharacter) =>
     ipcRenderer.send("persona:pointer-region", Boolean(pointerOverCharacter)),
   subscribe: (listener) => {

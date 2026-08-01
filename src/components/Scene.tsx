@@ -16,19 +16,14 @@ import * as THREE from 'three';
 import { Avatar } from './Avatar';
 import type { PlayableAnimationType } from '../animation-catalog';
 import { calculateFullBodyFraming } from '../camera-framing';
-import {
-  isPointerInsideRect,
-  screenRectFromNdc,
-  type NdcPoint,
-  type ScreenRect,
-} from '../pointer-region';
+import { screenRectFromNdc, type NdcPoint, type ScreenRect } from '../pointer-region';
 import { resolveLightingSettings } from '../settings-defaults';
 
 // The overlay window is far larger than the character it draws. Reporting where
-// the character actually is lets the main process keep the transparent
-// remainder click-through, so buttons in the app underneath stay reachable.
-const POINTER_REGION_PADDING = 16;
-const POINTER_REGION_FRAME_INTERVAL = 6;
+// the character actually is lets the app keep the transparent remainder
+// click-through and anchor the hover frame to the model.
+const CHARACTER_RECT_PADDING = 16;
+const CHARACTER_RECT_FRAME_INTERVAL = 6;
 
 interface SceneProps {
   animation: PlayableAnimationType;
@@ -43,8 +38,9 @@ interface SceneProps {
   modelUrl: string;
   onAnimationComplete: () => void;
   playback: 'loop' | 'once';
-  /** Report the character's screen rectangle so the overlay can stay click-through. */
-  reportPointerRegion?: boolean;
+  /** Receives the character's screen rectangle as it moves, for the hover frame
+   * and the click-through region. Omit in previews that need neither. */
+  onCharacterRect?: (rect: ScreenRect | null) => void;
   speaking: boolean;
 }
 
@@ -153,45 +149,31 @@ function FullBodyCamera({
   return null;
 }
 
-function PointerRegionReporter({ object }: { object: THREE.Object3D | null }) {
+function CharacterRectReporter({
+  object,
+  onRect,
+}: {
+  object: THREE.Object3D | null;
+  onRect: (rect: ScreenRect | null) => void;
+}) {
   const camera = useThree((state) => state.camera);
   const size = useThree((state) => state.size);
-  const pointer = useRef<{ x: number; y: number } | null>(null);
-  const rect = useRef<ScreenRect | null>(null);
-  const reported = useRef<boolean | null>(null);
   const frame = useRef(0);
   const box = useRef(new THREE.Box3());
   const corner = useRef(new THREE.Vector3());
+  const reported = useRef<ScreenRect | null>(null);
 
-  useEffect(() => {
-    // Electron forwards mouse moves while the window ignores mouse events, so
-    // the renderer can still tell when the pointer crosses the character.
-    const handleMove = (event: MouseEvent) => {
-      pointer.current = { x: event.clientX, y: event.clientY };
-    };
-    const handleLeave = () => {
-      pointer.current = null;
-    };
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseleave', handleLeave);
-    return () => {
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseleave', handleLeave);
-      // Never leave the window holding the pointer after the scene goes away.
-      window.personaBridge?.setPointerRegion(false);
-    };
-  }, []);
+  useEffect(() => () => onRect(null), [onRect]);
 
   useFrame(() => {
     frame.current += 1;
-    if (frame.current % POINTER_REGION_FRAME_INTERVAL !== 0) return;
+    if (frame.current % CHARACTER_RECT_FRAME_INTERVAL !== 0) return;
 
+    let rect: ScreenRect | null = null;
     if (object) {
       object.updateWorldMatrix(true, true);
       box.current.setFromObject(object);
-      if (box.current.isEmpty()) {
-        rect.current = null;
-      } else {
+      if (!box.current.isEmpty()) {
         const points: NdcPoint[] = [];
         for (const x of [box.current.min.x, box.current.max.x]) {
           for (const y of [box.current.min.y, box.current.max.y]) {
@@ -201,19 +183,22 @@ function PointerRegionReporter({ object }: { object: THREE.Object3D | null }) {
             }
           }
         }
-        rect.current = screenRectFromNdc(points, size, POINTER_REGION_PADDING);
+        rect = screenRectFromNdc(points, size, CHARACTER_RECT_PADDING);
       }
-    } else {
-      rect.current = null;
     }
 
-    const position = pointer.current;
-    const over = position
-      ? isPointerInsideRect(position.x, position.y, rect.current)
-      : false;
-    if (over === reported.current) return;
-    reported.current = over;
-    window.personaBridge?.setPointerRegion(over);
+    const previous = reported.current;
+    const unchanged =
+      (rect == null && previous == null) ||
+      (rect != null &&
+        previous != null &&
+        Math.abs(rect.left - previous.left) < 1 &&
+        Math.abs(rect.right - previous.right) < 1 &&
+        Math.abs(rect.top - previous.top) < 1 &&
+        Math.abs(rect.bottom - previous.bottom) < 1);
+    if (unchanged) return;
+    reported.current = rect;
+    onRect(rect);
   });
 
   return null;
@@ -278,8 +263,11 @@ export function Scene(props: SceneProps) {
         object={avatarScene}
       />
       <Avatar {...props} onReady={handleAvatarReady} />
-      {props.reportPointerRegion && (
-        <PointerRegionReporter object={avatarScene} />
+      {props.onCharacterRect && (
+        <CharacterRectReporter
+          object={avatarScene}
+          onRect={props.onCharacterRect}
+        />
       )}
       {props.groundShadow && grounding && (
         <ContactShadows

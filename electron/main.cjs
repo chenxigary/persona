@@ -46,6 +46,8 @@ const {
 
 const WINDOW_WIDTH = 430;
 const WINDOW_HEIGHT = 680;
+const MIN_WINDOW_WIDTH = 320;
+const MIN_WINDOW_HEIGHT = 480;
 const SETTINGS_WINDOW_WIDTH = 1180;
 const SETTINGS_WINDOW_HEIGHT = 780;
 // Chromium paints this behind newly exposed areas during a resize, so it must
@@ -265,8 +267,8 @@ function createWindow() {
   const window = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
-    minWidth: 320,
-    minHeight: 480,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     show: false,
     frame: false,
     transparent: true,
@@ -872,6 +874,27 @@ if (!app.requestSingleInstanceLock()) {
       syncWindowInteraction(
         windowInteraction.setPointerOverCharacter(pointerOverCharacter),
       );
+    });
+    ipcMain.on("persona:show-settings", (event) => {
+      if (avatarWindow?.webContents !== event.sender) return;
+      showSettings();
+    });
+    ipcMain.on("persona:resize-window", (event, size) => {
+      if (avatarWindow?.webContents !== event.sender || avatarWindow.isDestroyed()) {
+        return;
+      }
+      const width = Number(size?.width);
+      const height = Number(size?.height);
+      if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+      const bounds = avatarWindow.getBounds();
+      // Anchor the top-left corner so the character grows toward the bottom
+      // right, matching where the resize grip is.
+      avatarWindow.setBounds({
+        height: Math.max(MIN_WINDOW_HEIGHT, Math.round(height)),
+        width: Math.max(MIN_WINDOW_WIDTH, Math.round(width)),
+        x: bounds.x,
+        y: bounds.y,
+      });
     });
     ipcMain.on("persona:hide", () => void hideOverlay());
     // The resolved theme lives in renderer storage, so the window chrome can

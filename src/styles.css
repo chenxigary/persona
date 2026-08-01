@@ -2350,3 +2350,110 @@ button {
     gap: 4px;
   }
 }
+
+/* 12. Character hover frame =============================================== */
+
+.character-frame {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.character-frame.is-visible {
+  opacity: 1;
+}
+
+.character-frame__outline {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(255 255 255 / 32%);
+  border-radius: 12px;
+  background: rgb(12 13 18 / 18%);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 28%);
+}
+
+/* The bar doubles as the window's drag surface, so the whole strip is grabbable
+   and only the buttons opt back out. */
+.character-frame__bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 12px 12px 0 0;
+  /* Chromium evaluates app-region independently of pointer-events, so leaving
+     drag on while the frame is hidden would make an invisible strip above the
+     character grab the window. */
+  -webkit-app-region: no-drag;
+}
+
+.character-frame.is-visible .character-frame__bar {
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+
+.character-frame.is-visible .character-frame__resize {
+  pointer-events: auto;
+}
+
+.character-frame__grip {
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 45%);
+  cursor: grab;
+}
+
+.character-frame__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.character-frame__button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 12%);
+  color: rgb(255 255 255 / 88%);
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+
+.character-frame__button:hover {
+  background: rgb(255 255 255 / 26%);
+}
+
+.character-frame__button:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 70%);
+  outline-offset: 1px;
+}
+
+.character-frame__button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.character-frame__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  border-right: 2px solid rgb(255 255 255 / 45%);
+  border-bottom: 2px solid rgb(255 255 255 / 45%);
+  border-radius: 0 0 12px 0;
+  cursor: nwse-resize;
+  -webkit-app-region: no-drag;
+}

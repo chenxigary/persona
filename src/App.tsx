@@ -2,9 +2,13 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
+import { CharacterFrame } from './components/CharacterFrame';
 import { Scene } from './components/Scene';
+import { resolveFrameState } from './character-frame';
+import type { ScreenRect } from './pointer-region';
 import {
   animationUrlsForType,
   immediateVoiceAnimation,
@@ -37,6 +41,11 @@ export function App() {
     useState<BodyAnimationOverride | null>(null);
   const [settings, setSettings] =
     useState<PersonaSettingsSnapshot>(SETTINGS_FALLBACK);
+  const [characterRect, setCharacterRect] = useState<ScreenRect | null>(null);
+  const [frameVisible, setFrameVisible] = useState(false);
+  const [frameRect, setFrameRect] = useState<ScreenRect | null>(null);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const reportedRegion = useRef<string | null>(null);
 
   useEffect(() => {
     const bridge = window.personaBridge;
@@ -116,6 +125,56 @@ export function App() {
     );
   }, [overrideRequestId]);
 
+  // The frame is drawn around the character, so its buttons sit outside the
+  // character's own rectangle. The window therefore has to accept the pointer
+  // across the whole framed area while the frame is up, or those buttons land
+  // in the click-through region and cannot be clicked at all.
+  useEffect(() => {
+    let visible = false;
+
+    const apply = () => {
+      const viewport = { height: window.innerHeight, width: window.innerWidth };
+      const state = resolveFrameState({
+        characterRect,
+        pointer: pointer.current,
+        viewport,
+        wasVisible: visible,
+      });
+      visible = state.visible;
+      setFrameVisible(state.visible);
+      setFrameRect(state.frameRect);
+
+      const key = state.pointerRegion
+        ? `${state.pointerRegion.left},${state.pointerRegion.top},${state.pointerRegion.right},${state.pointerRegion.bottom}`
+        : null;
+      const over = state.pointerRegion != null;
+      if (reportedRegion.current === (over ? key : null)) return;
+      reportedRegion.current = over ? key : null;
+      window.personaBridge?.setPointerRegion(over);
+    };
+
+    const handleMove = (event: MouseEvent) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+      apply();
+    };
+    const handleLeave = () => {
+      pointer.current = null;
+      apply();
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseleave', handleLeave);
+    window.addEventListener('resize', apply);
+    apply();
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseleave', handleLeave);
+      window.removeEventListener('resize', apply);
+      window.personaBridge?.setPointerRegion(false);
+      reportedRegion.current = null;
+    };
+  }, [characterRect]);
+
   return defaultModel ? (
     <main className="app">
       <Scene
@@ -127,10 +186,11 @@ export function App() {
         lighting={settings.model_lighting[defaultModel.id]}
         modelUrl={defaultModel.asset_url}
         onAnimationComplete={handleAnimationComplete}
+        onCharacterRect={setCharacterRect}
         playback={bodyOverride ? 'once' : 'loop'}
-        reportPointerRegion
         speaking={speaking}
       />
+      <CharacterFrame rect={frameRect} visible={frameVisible} />
     </main>
   ) : (
     <main className="app" />
