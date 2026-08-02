@@ -47,6 +47,8 @@ export function App() {
   // Held only while a frame corner is being dragged, so the character rescales
   // live without writing to disk on every pointer move.
   const [previewSize, setPreviewSize] = useState<number | null>(null);
+  const characterRectRef = useRef<ScreenRect | null>(null);
+  const frameVisibleRef = useRef(false);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const reportedCapture = useRef<boolean | null>(null);
 
@@ -128,36 +130,44 @@ export function App() {
     );
   }, [overrideRequestId]);
 
+  const applyFrameState = useCallback(() => {
+    const state = resolveFrameState({
+      characterRect: characterRectRef.current,
+      pointer: pointer.current,
+      viewport: { height: window.innerHeight, width: window.innerWidth },
+      wasVisible: frameVisibleRef.current,
+    });
+    frameVisibleRef.current = state.visible;
+    setFrameVisible(state.visible);
+    setFrameRect(state.frameRect);
+    if (reportedCapture.current === state.capturePointer) return;
+    reportedCapture.current = state.capturePointer;
+    window.personaBridge?.setPointerRegion(state.capturePointer);
+  }, []);
+
+  // The projected character rectangle refreshes several times per second as
+  // animation moves the model. Keep it outside the pointer-listener effect so
+  // those updates cannot reset the frame's hover hysteresis while the pointer
+  // is travelling from the character to a toolbar button.
+  useEffect(() => {
+    characterRectRef.current = characterRect;
+    applyFrameState();
+  }, [applyFrameState, characterRect]);
+
   // The frame is drawn around the character, so its buttons sit outside the
   // character's own rectangle. The window therefore has to accept the pointer
   // across the whole framed area while the frame is up, or those buttons land
   // in the click-through region and cannot be clicked at all.
   useEffect(() => {
-    let visible = false;
-
-    const apply = () => {
-      const state = resolveFrameState({
-        characterRect,
-        pointer: pointer.current,
-        viewport: { height: window.innerHeight, width: window.innerWidth },
-        wasVisible: visible,
-      });
-      visible = state.visible;
-      setFrameVisible(state.visible);
-      setFrameRect(state.frameRect);
-      if (reportedCapture.current === state.capturePointer) return;
-      reportedCapture.current = state.capturePointer;
-      window.personaBridge?.setPointerRegion(state.capturePointer);
-    };
 
     const handleMove = (event: MouseEvent) => {
       pointer.current = { x: event.clientX, y: event.clientY };
-      apply();
+      applyFrameState();
     };
     const forgetPointer = () => {
       if (pointer.current == null) return;
       pointer.current = null;
-      apply();
+      applyFrameState();
     };
     // mouseleave on window is unreliable in Chromium, and once the pointer is
     // off the window there are no more moves to correct a stale position - the
@@ -173,18 +183,19 @@ export function App() {
     // Losing focus means the pointer is almost certainly somewhere else, and
     // pass-through windows do not always get a final move on the way out.
     window.addEventListener('blur', forgetPointer);
-    window.addEventListener('resize', apply);
-    apply();
+    window.addEventListener('resize', applyFrameState);
+    applyFrameState();
     return () => {
       window.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseout', handleOut);
       document.removeEventListener('mouseleave', forgetPointer);
       window.removeEventListener('blur', forgetPointer);
-      window.removeEventListener('resize', apply);
+      window.removeEventListener('resize', applyFrameState);
       window.personaBridge?.setPointerRegion(false);
+      frameVisibleRef.current = false;
       reportedCapture.current = null;
     };
-  }, [characterRect]);
+  }, [applyFrameState]);
 
   return defaultModel ? (
     <main className="app">

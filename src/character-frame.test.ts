@@ -81,6 +81,28 @@ describe('resolveFrameState', () => {
     expect(state.capturePointer).toBe(true);
   });
 
+  it('keeps toolbar hysteresis when animation refreshes the character rect', () => {
+    const entered = resolveFrameState({
+      characterRect,
+      pointer: inCharacter,
+      viewport,
+    });
+    const refreshedCharacterRect = {
+      ...characterRect,
+      left: characterRect.left + 1,
+      right: characterRect.right + 1,
+    };
+    const refreshed = resolveFrameState({
+      characterRect: refreshedCharacterRect,
+      pointer: onToolbar,
+      viewport,
+      wasVisible: entered.visible,
+    });
+
+    expect(refreshed.visible).toBe(true);
+    expect(refreshed.capturePointer).toBe(true);
+  });
+
   it('releases the pointer as soon as it leaves the framed area', () => {
     // Reporting a region here regardless of where the pointer actually is was
     // enough to keep the window swallowing every click underneath it.
