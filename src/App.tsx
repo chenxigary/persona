@@ -44,6 +44,9 @@ export function App() {
   const [characterRect, setCharacterRect] = useState<ScreenRect | null>(null);
   const [frameVisible, setFrameVisible] = useState(false);
   const [frameRect, setFrameRect] = useState<ScreenRect | null>(null);
+  // Held only while a frame corner is being dragged, so the character rescales
+  // live without writing to disk on every pointer move.
+  const [previewSize, setPreviewSize] = useState<number | null>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const reportedRegion = useRef<string | null>(null);
 
@@ -182,7 +185,7 @@ export function App() {
         animationRequest={animationRequest}
         animationUrls={animationUrls}
         audioLevel={audioLevel}
-        characterSize={settings.character_size}
+        characterSize={previewSize ?? settings.character_size}
         lighting={settings.model_lighting[defaultModel.id]}
         modelUrl={defaultModel.asset_url}
         onAnimationComplete={handleAnimationComplete}
@@ -191,7 +194,8 @@ export function App() {
         speaking={speaking}
       />
       <CharacterFrame
-        characterSize={settings.character_size}
+        characterSize={previewSize ?? settings.character_size}
+        onPreviewSize={setPreviewSize}
         rect={frameRect}
         visible={frameVisible}
       />

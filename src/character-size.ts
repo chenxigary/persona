@@ -34,3 +34,34 @@ export function canShrink(size: number): boolean {
 export function formatCharacterSize(size: number): string {
   return `${Math.round(clampCharacterSize(size) * 100)}%`;
 }
+
+/** Distance from the frame centre to the pointer, used as the drag radius. */
+export function dragRadius(
+  centre: { x: number; y: number },
+  point: { x: number; y: number },
+): number {
+  return Math.hypot(point.x - centre.x, point.y - centre.y);
+}
+
+/**
+ * Size after dragging a frame corner. The frame is drawn around the character,
+ * so pulling a corner away from the centre grows the character and pushing it
+ * inward shrinks it, in proportion to how far the pointer moved relative to
+ * where the drag started.
+ *
+ * Continuous rather than stepped: this is direct manipulation, and snapping
+ * would fight the pointer. The stepped buttons remain for exact values.
+ */
+export function sizeFromDrag(
+  startSize: number,
+  startRadius: number,
+  currentRadius: number,
+): number {
+  if (!Number.isFinite(startRadius) || startRadius <= 1) {
+    return clampCharacterSize(startSize);
+  }
+  if (!Number.isFinite(currentRadius) || currentRadius < 0) {
+    return clampCharacterSize(startSize);
+  }
+  return clampCharacterSize(startSize * (currentRadius / startRadius));
+}

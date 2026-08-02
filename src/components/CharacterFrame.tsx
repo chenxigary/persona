@@ -3,28 +3,35 @@ import { frameStyle } from '../character-frame';
 import {
   canGrow,
   canShrink,
+  dragRadius,
   formatCharacterSize,
   nudgeCharacterSize,
+  sizeFromDrag,
 } from '../character-size';
 import type { ScreenRect } from '../pointer-region';
 
 interface CharacterFrameProps {
   characterSize: number;
+  /** Live size while a corner is being dragged; null commits the stored size. */
+  onPreviewSize: (size: number | null) => void;
   rect: ScreenRect | null;
   visible: boolean;
 }
 
-const RESIZE_MIN = { height: 480, width: 320 };
+const CORNERS = ['nw', 'ne', 'sw', 'se'] as const;
 
 export function CharacterFrame({
   characterSize,
+  onPreviewSize,
   rect,
   visible,
 }: CharacterFrameProps) {
   const box = frameStyle(rect);
-  const resizing = useRef<{ height: number; width: number; x: number; y: number } | null>(
-    null,
-  );
+  const scaling = useRef<{
+    centre: { x: number; y: number };
+    size: number;
+    startRadius: number;
+  } | null>(null);
 
   const handleSettings = useCallback(() => {
     window.personaBridge?.showSettings();
@@ -46,37 +53,52 @@ export function CharacterFrame({
     );
   }, [characterSize]);
 
-  const handleResizeStart = useCallback((event: React.PointerEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    resizing.current = {
-      height: window.innerHeight,
-      width: window.innerWidth,
-      x: event.screenX,
-      y: event.screenY,
-    };
-    (event.target as Element).setPointerCapture?.(event.pointerId);
-  }, []);
+  const handleScaleStart = useCallback(
+    (event: React.PointerEvent) => {
+      if (!rect) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const centre = {
+        x: (rect.left + rect.right) / 2,
+        y: (rect.top + rect.bottom) / 2,
+      };
+      scaling.current = {
+        centre,
+        size: characterSize,
+        startRadius: dragRadius(centre, { x: event.clientX, y: event.clientY }),
+      };
+      (event.target as Element).setPointerCapture?.(event.pointerId);
+    },
+    [characterSize, rect],
+  );
 
   useEffect(() => {
-    // Tracked on window rather than on the grip so a fast drag that outruns the
-    // pointer cannot strand the window mid-resize.
+    // Tracked on window rather than on the handle, so a drag that outruns the
+    // pointer still ends cleanly.
     const handleMove = (event: PointerEvent) => {
-      const origin = resizing.current;
+      const origin = scaling.current;
       if (!origin) return;
-      window.personaBridge?.resizeWindow({
-        height: Math.max(
-          RESIZE_MIN.height,
-          Math.round(origin.height + (event.screenY - origin.y)),
+      onPreviewSize(
+        sizeFromDrag(
+          origin.size,
+          origin.startRadius,
+          dragRadius(origin.centre, { x: event.clientX, y: event.clientY }),
         ),
-        width: Math.max(
-          RESIZE_MIN.width,
-          Math.round(origin.width + (event.screenX - origin.x)),
-        ),
-      });
+      );
     };
-    const handleUp = () => {
-      resizing.current = null;
+    const handleUp = (event: PointerEvent) => {
+      const origin = scaling.current;
+      if (!origin) return;
+      scaling.current = null;
+      const size = sizeFromDrag(
+        origin.size,
+        origin.startRadius,
+        dragRadius(origin.centre, { x: event.clientX, y: event.clientY }),
+      );
+      // Persist once at the end. setCharacterSize writes to disk, so calling it
+      // for every pointermove would hammer it for the whole drag.
+      onPreviewSize(null);
+      void window.personaSettings?.setCharacterSize(size);
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
@@ -86,7 +108,7 @@ export function CharacterFrame({
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
     };
-  }, []);
+  }, [onPreviewSize]);
 
   if (!box) return null;
 
@@ -171,11 +193,14 @@ export function CharacterFrame({
         </div>
       </div>
 
-      <span
-        className="character-frame__resize"
-        onPointerDown={handleResizeStart}
-        title="拖动缩放窗口"
-      />
+      {CORNERS.map((corner) => (
+        <span
+          className={`character-frame__corner character-frame__corner--${corner}`}
+          key={corner}
+          onPointerDown={handleScaleStart}
+          title="拖动缩放角色"
+        />
+      ))}
     </div>
   );
 }

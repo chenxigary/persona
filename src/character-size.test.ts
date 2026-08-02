@@ -4,8 +4,10 @@ import {
   canShrink,
   CHARACTER_SIZE,
   clampCharacterSize,
+  dragRadius,
   formatCharacterSize,
   nudgeCharacterSize,
+  sizeFromDrag,
 } from './character-size';
 
 describe('clampCharacterSize', () => {
@@ -76,5 +78,46 @@ describe('formatCharacterSize', () => {
 
   it('never shows a value outside the range', () => {
     expect(formatCharacterSize(5)).toBe('160%');
+  });
+});
+
+describe('dragRadius', () => {
+  it('measures distance from the frame centre', () => {
+    expect(dragRadius({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
+    expect(dragRadius({ x: 10, y: 10 }, { x: 10, y: 10 })).toBe(0);
+  });
+});
+
+describe('sizeFromDrag', () => {
+  it('grows when the pointer moves away from the centre', () => {
+    expect(sizeFromDrag(1, 100, 120)).toBeCloseTo(1.2, 6);
+  });
+
+  it('shrinks when the pointer moves toward the centre', () => {
+    expect(sizeFromDrag(1, 100, 80)).toBeCloseTo(0.8, 6);
+  });
+
+  it('stays put when the pointer has not moved', () => {
+    expect(sizeFromDrag(1.3, 140, 140)).toBeCloseTo(1.3, 6);
+  });
+
+  it('clamps at both bounds so a long drag cannot escape the range', () => {
+    expect(sizeFromDrag(1, 100, 900)).toBe(CHARACTER_SIZE.max);
+    expect(sizeFromDrag(1, 100, 1)).toBe(CHARACTER_SIZE.min);
+  });
+
+  it('is continuous rather than stepped, so it can track the pointer', () => {
+    // Direct manipulation: snapping to 10% steps would fight the drag.
+    const a = sizeFromDrag(1, 100, 103);
+    const b = sizeFromDrag(1, 100, 106);
+    expect(a).not.toBe(b);
+    expect(b).toBeGreaterThan(a);
+  });
+
+  it('ignores a degenerate start radius instead of exploding the size', () => {
+    // Pressing exactly on the frame centre would otherwise divide by ~zero.
+    expect(sizeFromDrag(1.1, 0, 300)).toBeCloseTo(1.1, 6);
+    expect(sizeFromDrag(1.1, Number.NaN, 300)).toBeCloseTo(1.1, 6);
+    expect(sizeFromDrag(1.1, 100, Number.NaN)).toBeCloseTo(1.1, 6);
   });
 });

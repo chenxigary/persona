@@ -2399,8 +2399,52 @@ button {
   -webkit-app-region: drag;
 }
 
-.character-frame.is-visible .character-frame__resize {
+.character-frame.is-visible .character-frame__corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 0 solid rgb(255 255 255 / 78%);
+  -webkit-app-region: no-drag;
+}
+
+.character-frame.is-visible .character-frame__corner {
   pointer-events: auto;
+}
+
+.character-frame__corner--nw {
+  left: -1px;
+  top: -1px;
+  border-top-width: 3px;
+  border-left-width: 3px;
+  border-radius: 12px 0 0 0;
+  cursor: nwse-resize;
+}
+
+.character-frame__corner--ne {
+  right: -1px;
+  top: -1px;
+  border-top-width: 3px;
+  border-right-width: 3px;
+  border-radius: 0 12px 0 0;
+  cursor: nesw-resize;
+}
+
+.character-frame__corner--sw {
+  left: -1px;
+  bottom: -1px;
+  border-bottom-width: 3px;
+  border-left-width: 3px;
+  border-radius: 0 0 0 12px;
+  cursor: nesw-resize;
+}
+
+.character-frame__corner--se {
+  right: -1px;
+  bottom: -1px;
+  border-bottom-width: 3px;
+  border-right-width: 3px;
+  border-radius: 0 0 12px 0;
+  cursor: nwse-resize;
 }
 
 .character-frame__grip {
