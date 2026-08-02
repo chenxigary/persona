@@ -48,7 +48,7 @@ export function App() {
   // live without writing to disk on every pointer move.
   const [previewSize, setPreviewSize] = useState<number | null>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
-  const reportedRegion = useRef<string | null>(null);
+  const reportedCapture = useRef<boolean | null>(null);
 
   useEffect(() => {
     const bridge = window.personaBridge;
@@ -136,45 +136,53 @@ export function App() {
     let visible = false;
 
     const apply = () => {
-      const viewport = { height: window.innerHeight, width: window.innerWidth };
       const state = resolveFrameState({
         characterRect,
         pointer: pointer.current,
-        viewport,
+        viewport: { height: window.innerHeight, width: window.innerWidth },
         wasVisible: visible,
       });
       visible = state.visible;
       setFrameVisible(state.visible);
       setFrameRect(state.frameRect);
-
-      const key = state.pointerRegion
-        ? `${state.pointerRegion.left},${state.pointerRegion.top},${state.pointerRegion.right},${state.pointerRegion.bottom}`
-        : null;
-      const over = state.pointerRegion != null;
-      if (reportedRegion.current === (over ? key : null)) return;
-      reportedRegion.current = over ? key : null;
-      window.personaBridge?.setPointerRegion(over);
+      if (reportedCapture.current === state.capturePointer) return;
+      reportedCapture.current = state.capturePointer;
+      window.personaBridge?.setPointerRegion(state.capturePointer);
     };
 
     const handleMove = (event: MouseEvent) => {
       pointer.current = { x: event.clientX, y: event.clientY };
       apply();
     };
-    const handleLeave = () => {
+    const forgetPointer = () => {
+      if (pointer.current == null) return;
       pointer.current = null;
       apply();
     };
+    // mouseleave on window is unreliable in Chromium, and once the pointer is
+    // off the window there are no more moves to correct a stale position - the
+    // frame would simply stay up forever. mouseout with a null relatedTarget is
+    // the event that actually fires when the pointer exits the document.
+    const handleOut = (event: MouseEvent) => {
+      if (event.relatedTarget == null) forgetPointer();
+    };
 
     window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseleave', handleLeave);
+    document.addEventListener('mouseout', handleOut);
+    document.addEventListener('mouseleave', forgetPointer);
+    // Losing focus means the pointer is almost certainly somewhere else, and
+    // pass-through windows do not always get a final move on the way out.
+    window.addEventListener('blur', forgetPointer);
     window.addEventListener('resize', apply);
     apply();
     return () => {
       window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseleave', handleLeave);
+      document.removeEventListener('mouseout', handleOut);
+      document.removeEventListener('mouseleave', forgetPointer);
+      window.removeEventListener('blur', forgetPointer);
       window.removeEventListener('resize', apply);
       window.personaBridge?.setPointerRegion(false);
-      reportedRegion.current = null;
+      reportedCapture.current = null;
     };
   }, [characterRect]);
 

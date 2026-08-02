@@ -54,7 +54,7 @@ describe('resolveFrameState', () => {
       viewport,
     });
     expect(state.visible).toBe(true);
-    expect(state.pointerRegion).toEqual(state.frameRect);
+    expect(state.capturePointer).toBe(true);
   });
 
   it('stays hidden when the pointer is only over the chrome margin', () => {
@@ -65,7 +65,7 @@ describe('resolveFrameState', () => {
       viewport,
     });
     expect(state.visible).toBe(false);
-    expect(state.pointerRegion).toEqual(characterRect);
+    expect(state.capturePointer).toBe(false);
   });
 
   it('keeps the frame while the pointer moves onto the toolbar', () => {
@@ -78,10 +78,12 @@ describe('resolveFrameState', () => {
       wasVisible: true,
     });
     expect(state.visible).toBe(true);
-    expect(state.pointerRegion).toEqual(state.frameRect);
+    expect(state.capturePointer).toBe(true);
   });
 
-  it('hides once the pointer leaves the framed area', () => {
+  it('releases the pointer as soon as it leaves the framed area', () => {
+    // Reporting a region here regardless of where the pointer actually is was
+    // enough to keep the window swallowing every click underneath it.
     const state = resolveFrameState({
       characterRect,
       pointer: wellOutside,
@@ -89,7 +91,7 @@ describe('resolveFrameState', () => {
       wasVisible: true,
     });
     expect(state.visible).toBe(false);
-    expect(state.pointerRegion).toEqual(characterRect);
+    expect(state.capturePointer).toBe(false);
   });
 
   it('claims nothing while the pointer is off the window', () => {
@@ -100,7 +102,7 @@ describe('resolveFrameState', () => {
       wasVisible: true,
     });
     expect(state.visible).toBe(false);
-    expect(state.pointerRegion).toBeNull();
+    expect(state.capturePointer).toBe(false);
   });
 
   it('claims nothing before the character has loaded', () => {
@@ -111,7 +113,7 @@ describe('resolveFrameState', () => {
       wasVisible: true,
     });
     expect(state.visible).toBe(false);
-    expect(state.pointerRegion).toBeNull();
+    expect(state.capturePointer).toBe(false);
     expect(state.frameRect).toBeNull();
   });
 });

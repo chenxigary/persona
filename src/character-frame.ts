@@ -44,10 +44,10 @@ export function resolveFrameState({
   pointer: { x: number; y: number } | null;
   viewport: { height: number; width: number };
   wasVisible?: boolean;
-}): { frameRect: ScreenRect | null; pointerRegion: ScreenRect | null; visible: boolean } {
+}): { capturePointer: boolean; frameRect: ScreenRect | null; visible: boolean } {
   const framedRect = expandRectForChrome(characterRect, viewport);
   if (!characterRect || !framedRect || !pointer) {
-    return { frameRect: framedRect, pointerRegion: null, visible: false };
+    return { capturePointer: false, frameRect: framedRect, visible: false };
   }
 
   const visible = wasVisible
@@ -56,9 +56,11 @@ export function resolveFrameState({
 
   return {
     frameRect: framedRect,
-    // While the frame is up the whole framed area must take the pointer, or the
-    // toolbar buttons fall inside the click-through region.
-    pointerRegion: visible ? framedRect : characterRect,
+    // The window takes the pointer exactly while the frame is up. That covers
+    // the character itself and the surrounding chrome, and releases the moment
+    // the pointer leaves - anything else strands the window holding clicks that
+    // belong to whatever is underneath.
+    capturePointer: visible,
     visible,
   };
 }
