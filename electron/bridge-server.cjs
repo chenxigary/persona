@@ -14,7 +14,7 @@ function isVoiceState(value) {
     value != null &&
     typeof value === "object" &&
     ["inactive", "starting", "active", "stopping"].includes(value.phase) &&
-    ["idle", "listening", "speaking"].includes(value.activity) &&
+    ["idle", "listening", "thinking", "speaking"].includes(value.activity) &&
     typeof value.microphoneMuted === "boolean" &&
     typeof value.outputMuted === "boolean"
   );

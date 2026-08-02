@@ -59,7 +59,7 @@ Treat signed and notarized artifacts as the production release path.
    - packaged and user model selection;
    - user model and action creation, multi-file VRMA import, preview,
      persistence, clip deletion, and action deletion;
-   - permanent empty Idle and Speaking slots and numbered clip names;
+   - permanent empty Idle, Thinking, and Speaking slots and numbered clip names;
    - packaged action edit, removal, and reset without changing user uploads;
    - random clip selection for voice-driven and MCP-triggered actions;
    - shortcut, URL protocol, zoom, orbit, and pan;

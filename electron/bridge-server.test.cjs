@@ -45,6 +45,13 @@ test("normalizes voice events and configured animation commands", () => {
     phase: "active",
   };
   assert.deepEqual(normalizeEvent({ type: "state", state }), { type: "state", state });
+  assert.equal(
+    normalizeEvent({
+      type: "state",
+      state: { ...state, activity: "thinking" },
+    }).state.activity,
+    "thinking",
+  );
   assert.deepEqual(normalizeEvent({ type: "audio-level", level: 4 }), {
     type: "audio-level",
     level: 1,

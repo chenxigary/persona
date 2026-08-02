@@ -71,7 +71,7 @@ function writePackagedLibrary(root) {
   return packagedLibraryPath;
 }
 
-test("starts with permanent empty Idle and Speaking actions", (context) => {
+test("starts with permanent empty Idle, Thinking, and Speaking actions", (context) => {
   const { userDataPath, packagedLibraryPath } = fixture(context);
   const snapshot = createSettingsStore({ userDataPath, packagedLibraryPath }).getSnapshot();
 
@@ -92,6 +92,12 @@ test("starts with permanent empty Idle and Speaking actions", (context) => {
       {
         animation_name: "idle",
         animation_type: "IDLE",
+        removable: false,
+        asset_urls: [],
+      },
+      {
+        animation_name: "thinking",
+        animation_type: "THINKING",
         removable: false,
         asset_urls: [],
       },
@@ -213,7 +219,7 @@ test("keeps user library records when migrating the earlier settings schema", (c
   );
 
   const snapshot = createSettingsStore({ userDataPath, packagedLibraryPath }).getSnapshot();
-  assert.equal(snapshot.schema_version, 5);
+  assert.equal(snapshot.schema_version, 6);
   assert.equal(snapshot.default_model_id, modelId);
   assert.equal(snapshot.character_size, 1.15);
   assert.ok(snapshot.models.some((model) => model.id === modelId));
@@ -441,6 +447,7 @@ test("migrates reserved legacy uploads into the permanent system actions", (cont
   const { userDataPath, packagedLibraryPath } = fixture(context);
   const idleId = "33333333-3333-4333-8333-333333333333";
   const speakingId = "44444444-4444-4444-8444-444444444444";
+  const thinkingId = "55555555-5555-4555-8555-555555555555";
   const animationDirectory = path.join(
     userDataPath,
     "assets",
@@ -449,6 +456,7 @@ test("migrates reserved legacy uploads into the permanent system actions", (cont
   fs.mkdirSync(animationDirectory, { recursive: true });
   writeGlb(path.join(animationDirectory, `${idleId}.vrma`));
   writeGlb(path.join(animationDirectory, `${speakingId}.vrma`));
+  writeGlb(path.join(animationDirectory, `${thinkingId}.vrma`));
   fs.writeFileSync(
     path.join(userDataPath, "settings.json"),
     JSON.stringify({
@@ -460,6 +468,13 @@ test("migrates reserved legacy uploads into the permanent system actions", (cont
           animation_description: "A relaxed standing loop.",
           animation_trigger_scenario: "Use while Persona is waiting.",
           stored_filename: `${idleId}.vrma`,
+        },
+        {
+          id: thinkingId,
+          animation_name: "thinking1",
+          animation_description: "A contemplative loop.",
+          animation_trigger_scenario: "Use while Persona prepares a response.",
+          stored_filename: `${thinkingId}.vrma`,
         },
         {
           id: speakingId,
@@ -480,6 +495,9 @@ test("migrates reserved legacy uploads into the permanent system actions", (cont
   const speaking = snapshot.animations.find(
     (animation) => animation.animation_name === "speaking",
   );
+  const thinking = snapshot.animations.find(
+    (animation) => animation.animation_name === "thinking",
+  );
   assert.equal(idle?.animation_type, "IDLE");
   assert.deepEqual(
     idle?.clips.map((clip) => clip.animation_name),
@@ -489,6 +507,61 @@ test("migrates reserved legacy uploads into the permanent system actions", (cont
   assert.deepEqual(
     speaking?.clips.map((clip) => clip.animation_name),
     ["speaking1"],
+  );
+  assert.equal(thinking?.animation_type, "THINKING");
+  assert.deepEqual(
+    thinking?.clips.map((clip) => clip.animation_name),
+    ["thinking1"],
+  );
+});
+
+test("moves a schema 5 thinking action into the new system slot", (context) => {
+  const { userDataPath, packagedLibraryPath } = fixture(context);
+  const actionId = "66666666-6666-4666-8666-666666666666";
+  const clipId = "77777777-7777-4777-8777-777777777777";
+  const animationDirectory = path.join(userDataPath, "assets", "animations");
+  fs.mkdirSync(animationDirectory, { recursive: true });
+  writeGlb(path.join(animationDirectory, `${clipId}.vrma`));
+  fs.writeFileSync(
+    path.join(userDataPath, "settings.json"),
+    JSON.stringify({
+      schema_version: 5,
+      animations: [
+        {
+          id: actionId,
+          animation_name: "thinking",
+          animation_description: "A previously custom thinking action.",
+          animation_trigger_scenario: "Use while preparing a response.",
+        },
+      ],
+      animation_clips: {
+        [actionId]: [
+          {
+            id: clipId,
+            stored_filename: `${clipId}.vrma`,
+            clip_name: "thinking1",
+          },
+        ],
+      },
+    }),
+  );
+
+  const snapshot = createSettingsStore({
+    userDataPath,
+    packagedLibraryPath,
+  }).getSnapshot();
+  const thinking = snapshot.animations.find(
+    (animation) => animation.id === "system-thinking",
+  );
+
+  assert.equal(snapshot.schema_version, 6);
+  assert.equal(
+    snapshot.animations.some((animation) => animation.id === actionId),
+    false,
+  );
+  assert.deepEqual(
+    thinking?.clips.map((clip) => clip.animation_name),
+    ["thinking1"],
   );
 });
 
@@ -528,6 +601,10 @@ test("groups multiple uploaded clips under one action and removes them independe
   assert.equal(fs.existsSync(removedPath), false);
   assert.throws(() => store.deleteAnimation("system-idle"), /cannot be removed/);
   assert.throws(
+    () => store.deleteAnimation("system-thinking"),
+    /cannot be removed/,
+  );
+  assert.throws(
     () => store.deleteAnimation("system-speaking"),
     /cannot be removed/,
   );
@@ -547,7 +624,7 @@ test("persists every voice source mode and migrates schema 4 settings", (context
     mode: "custom",
     process_pattern: "  local-tts|open-webui  ",
   });
-  assert.equal(snapshot.schema_version, 5);
+  assert.equal(snapshot.schema_version, 6);
   assert.deepEqual(snapshot.voice_source, {
     mode: "custom",
     process_pattern: "local-tts|open-webui",
@@ -608,7 +685,7 @@ test("persists every voice source mode and migrates schema 4 settings", (context
     userDataPath,
     packagedLibraryPath,
   }).getSnapshot();
-  assert.equal(migrated.schema_version, 5);
+  assert.equal(migrated.schema_version, 6);
   assert.deepEqual(migrated.voice_source, {
     mode: "custom",
     process_pattern: "voice-engine",

@@ -1,5 +1,6 @@
 export type AnimationType =
   | 'IDLE'
+  | 'THINKING'
   | 'GREETING'
   | 'TALK'
   | 'HAPPY'
@@ -9,8 +10,10 @@ export type PlayableAnimationType = AnimationType | 'CUSTOM';
 
 export function immediateVoiceAnimation(
   voice: Pick<VoiceState, 'activity' | 'outputMuted' | 'phase'>,
-): 'IDLE' | 'TALK' | null {
-  if (voice.phase !== 'active' || voice.outputMuted) return 'IDLE';
+): 'IDLE' | 'THINKING' | 'TALK' | null {
+  if (voice.phase !== 'active') return 'IDLE';
+  if (voice.activity === 'thinking') return 'THINKING';
+  if (voice.outputMuted) return 'IDLE';
   if (voice.activity === 'speaking') return 'TALK';
   return null;
 }

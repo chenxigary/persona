@@ -16,6 +16,12 @@
       "source": null
     },
     {
+      "path": "animations/thinking.vrma",
+      "role": "animation",
+      "license": null,
+      "source": null
+    },
+    {
       "path": "animations/talk1.vrma",
       "role": "animation",
       "license": null,

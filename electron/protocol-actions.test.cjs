@@ -8,6 +8,10 @@ test("maps Persona URLs to lifecycle and clamped level events", () => {
   const commands = parseProtocolUrl("persona://speaking?level=3");
   assert.equal(commands[0].event.state.activity, "speaking");
   assert.deepEqual(commands[1].event, { type: "audio-level", level: 1 });
+  assert.equal(
+    parseProtocolUrl("persona://thinking")[0].event.state.activity,
+    "thinking",
+  );
   assert.equal(parseProtocolUrl("persona://inactive")[0].event.state.phase, "inactive");
 });
 

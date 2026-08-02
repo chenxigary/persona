@@ -33,6 +33,22 @@ const SYSTEM_ACTIONS: PersonaAnimationSettings[] = [
     asset_urls: [],
   },
   {
+    id: 'system-thinking',
+    animation_name: 'thinking',
+    animation_description:
+      'A subtle contemplative loop while the assistant prepares a response.',
+    animation_trigger_scenario:
+      'Used automatically after response generation starts and before voice output begins.',
+    animation_type: 'THINKING',
+    origin: 'packaged',
+    system: true,
+    editable: false,
+    modified: false,
+    removable: false,
+    clips: [],
+    asset_urls: [],
+  },
+  {
     id: 'system-speaking',
     animation_name: 'speaking',
     animation_description:
@@ -49,6 +65,10 @@ const SYSTEM_ACTIONS: PersonaAnimationSettings[] = [
     asset_urls: [],
   },
 ];
+
+const SYSTEM_ACTION_IDS = new Set(
+  SYSTEM_ACTIONS.map((animation) => animation.id),
+);
 
 export const DEFAULT_LIGHTING: PersonaLightingSettings = {
   tone_mapping: 'none',
@@ -82,7 +102,7 @@ export function resolveLightingSettings(
 }
 
 export const SETTINGS_FALLBACK: PersonaSettingsSnapshot = {
-  schema_version: 5,
+  schema_version: 6,
   default_model_id: null,
   character_size: 1,
   packaged_animation_change_count: 0,
@@ -117,16 +137,10 @@ export async function loadPackagedSettingsFallback(): Promise<PersonaSettingsSna
     animation_trigger_scenario: animation.animation_trigger_scenario,
     animation_type: animation.animation_type,
     origin: 'packaged' as const,
-    system:
-      animation.id === 'system-idle' ||
-      animation.id === 'system-speaking',
-    editable:
-      animation.id !== 'system-idle' &&
-      animation.id !== 'system-speaking',
+    system: SYSTEM_ACTION_IDS.has(animation.id),
+    editable: !SYSTEM_ACTION_IDS.has(animation.id),
     modified: false,
-    removable:
-      animation.id !== 'system-idle' &&
-      animation.id !== 'system-speaking',
+    removable: !SYSTEM_ACTION_IDS.has(animation.id),
     clips: animation.asset_paths.map((assetPath, index) => ({
       id: `${animation.id}:packaged:${index + 1}`,
       animation_name: `${animation.animation_name}${index + 1}`,

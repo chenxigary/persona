@@ -61,6 +61,18 @@ const SECTIONS: Array<{
   { id: 'mcp', label: 'MCP', description: 'Agent connection' },
 ];
 
+const SYSTEM_ACTION_LABELS: Partial<Record<PersonaAnimationType, string>> = {
+  IDLE: 'Idle',
+  THINKING: 'Thinking',
+  TALK: 'Speaking',
+};
+
+const SYSTEM_STATE_LABELS: Partial<Record<PersonaAnimationType, string>> = {
+  IDLE: 'idle',
+  THINKING: 'thinking',
+  TALK: 'speaking',
+};
+
 function Icon({ children }: { children: ReactNode }) {
   return (
     <svg
@@ -1041,9 +1053,9 @@ export function SettingsPage() {
                           <div>
                             <strong>
                               {animation.system
-                                ? animation.animation_type === 'IDLE'
-                                  ? 'Idle'
-                                  : 'Speaking'
+                                ? SYSTEM_ACTION_LABELS[
+                                    animation.animation_type ?? 'IDLE'
+                                  ]
                                 : animation.animation_name}
                             </strong>
                             <span>
@@ -1111,11 +1123,9 @@ export function SettingsPage() {
                         {animation.clips.length === 0 ? (
                           <p className="empty-clips">
                             {animation.system
-                              ? `Upload one or more clips for the ${
-                                  animation.animation_type === 'IDLE'
-                                    ? 'idle'
-                                    : 'speaking'
-                                } state. Persona uses the model pose until then.`
+                              ? `Upload one or more clips for the ${SYSTEM_STATE_LABELS[
+                                  animation.animation_type ?? 'IDLE'
+                                ]} state. Persona uses the model pose until then.`
                               : 'Upload one or more clips to make this action available to MCP.'}
                           </p>
                         ) : (

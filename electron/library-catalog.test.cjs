@@ -49,6 +49,12 @@ test("keeps permanent empty system actions in the packaged library", () => {
         asset_paths: [],
       },
       {
+        id: "system-thinking",
+        animation_name: "thinking",
+        animation_type: "THINKING",
+        asset_paths: [],
+      },
+      {
         id: "system-speaking",
         animation_name: "speaking",
         animation_type: "TALK",
@@ -160,6 +166,8 @@ test("resolves explicit and first-model packaged defaults", () => {
 test("infers live roles from reserved animation names and numbered variants", () => {
   assert.equal(inferAnimationType("idle"), "IDLE");
   assert.equal(inferAnimationType("idle-2"), "IDLE");
+  assert.equal(inferAnimationType("thinking1"), "THINKING");
+  assert.equal(inferAnimationType("thinking-2"), "THINKING");
   assert.equal(inferAnimationType("talk1"), "TALK");
   assert.equal(inferAnimationType("talk-2"), "TALK");
   assert.equal(inferAnimationType("greeting3"), "GREETING");

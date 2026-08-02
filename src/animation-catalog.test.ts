@@ -9,6 +9,13 @@ describe('Persona animation contract', () => {
   it('enters speaking directly when voice is already active at startup', () => {
     expect(
       immediateVoiceAnimation({
+        activity: 'thinking',
+        outputMuted: true,
+        phase: 'active',
+      }),
+    ).toBe('THINKING');
+    expect(
+      immediateVoiceAnimation({
         activity: 'speaking',
         outputMuted: false,
         phase: 'active',
@@ -52,6 +59,10 @@ describe('Persona animation contract', () => {
         asset_urls: ['talk1.vrma'],
       },
       {
+        animation_type: 'THINKING',
+        asset_urls: ['thinking.vrma'],
+      },
+      {
         animation_type: 'IDLE',
         asset_urls: ['idle.vrma'],
       },
@@ -65,6 +76,9 @@ describe('Persona animation contract', () => {
       'talk1.vrma',
       'talk2.vrma',
       'talk3.vrma',
+    ]);
+    expect(animationUrlsForType(animations, 'THINKING')).toEqual([
+      'thinking.vrma',
     ]);
   });
 });

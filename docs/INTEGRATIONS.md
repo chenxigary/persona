@@ -10,6 +10,10 @@ cross-process realtime voice event stream. If an official event stream becomes
 available, it can map to the same contract without changing Persona's window or
 animation system.
 
+The output listener can switch to Talk when playback begins, but audio alone
+cannot reveal when answer generation starts. A GPT Voice integration that owns
+that lifecycle should send Persona's `thinking` event at generation start.
+
 ## Codex MCP server
 
 Persona serves a Streamable HTTP MCP endpoint while the app is running. Add it
@@ -51,7 +55,8 @@ setup.
 An MCP-triggered action randomly selects one of its clips and temporarily takes
 priority over voice-driven body motion. Lip sync continues while the clip
 plays. A newer MCP action replaces the current one; when the one-shot clip
-finishes, Persona returns to the current idle, listening, or speaking state.
+finishes, Persona returns to the current idle, listening, thinking, or speaking
+state.
 
 The MCP endpoint uses the same port as the local HTTP API. If
 `PERSONA_BRIDGE_PORT` changes it, update the URL registered with Codex to match.
@@ -121,9 +126,11 @@ them. Three supported shapes:
 1. **Process listen.** Point Settings → Voice at the desktop app that plays
    assistant audio (for example a local TTS player or voice UI). Persona
    attaches to that process the same way it attaches to ChatGPT or Codex.
-2. **Loopback events.** Have your pipeline POST normalized state and levels to
-   `http://127.0.0.1:47831/events`, or open `persona://speaking?level=…` URLs,
-   when speech starts and ends.
+2. **Loopback events.** Have your pipeline POST `thinking` when response
+   generation starts, then `speaking` and normalized levels when playback
+   begins. The native listener can detect playback and make the second switch
+   automatically. URL integrations can open `persona://thinking` and
+   `persona://speaking?level=…` instead.
 3. **MCP actions.** Register any compatible MCP client against
    `http://127.0.0.1:47831/mcp` so the agent can trigger configured animations
    and window controls while audio still comes from (1) or (2).
@@ -138,7 +145,7 @@ Installed packages register `persona://`.
 | `persona://hide` | Hide Persona without quitting |
 | `persona://toggle` | Toggle visibility |
 | `persona://listening` | Begin a listening state |
-| `persona://thinking` | Settle the character while a response is prepared |
+| `persona://thinking` | Begin the Thinking system action while a response is prepared |
 | `persona://speaking?level=0.3` | Begin speaking and optionally set a level |
 | `persona://inactive` | End the voice state without hiding Persona |
 | `persona://animation?name=<animation-name>` | Play an active configured animation once |
@@ -160,7 +167,7 @@ Voice state:
   "type": "state",
   "state": {
     "phase": "active",
-    "activity": "speaking",
+    "activity": "thinking",
     "microphoneMuted": false,
     "outputMuted": false
   }
@@ -168,7 +175,7 @@ Voice state:
 ```
 
 Allowed phases are `inactive`, `starting`, `active`, and `stopping`. Allowed
-activities are `idle`, `listening`, and `speaking`.
+activities are `idle`, `listening`, `thinking`, and `speaking`.
 
 Normalized level:
 
@@ -194,9 +201,14 @@ Send events:
 
 ```bash
 curl -H 'Content-Type: application/json' \
-  --data '{"type":"state","state":{"phase":"active","activity":"speaking","microphoneMuted":false,"outputMuted":false}}' \
+  --data '{"type":"state","state":{"phase":"active","activity":"thinking","microphoneMuted":false,"outputMuted":false}}' \
   http://127.0.0.1:47831/events
 ```
+
+For GPT Voice, send that `thinking` event as soon as answer generation begins.
+When Persona's process-scoped audio listener hears GPT Voice playback, it
+automatically replaces Thinking with Speaking/Talk. Send `persona://inactive`
+or an inactive HTTP state if generation is cancelled before playback.
 
 `GET /health` reports whether Persona is running and returns the last state. It
 does not expose user content.

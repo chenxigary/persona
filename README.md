@@ -96,13 +96,13 @@ Until a default model exists, Persona does not create the avatar window or
 start its voice-output listener. The first imported model becomes the default
 automatically.
 
-Persona always provides **Idle** and **Speaking** action slots. They begin
-without media, so Persona supplies a lightweight procedural fallback: it lowers
-T-pose arms, adds breathing and sway, and adds subtle speaking nods. Each action
-can contain multiple `.vrma` files; uploads receive numbered names such as
-`idle1`, `idle2`, `speaking1`, or `wave1`. Persona chooses a clip from the action
-whenever that action runs, and the configured clip automatically replaces the
-procedural fallback for that action.
+Persona always provides **Idle**, **Thinking**, and **Speaking** action slots.
+They begin without media, so Persona supplies a lightweight procedural fallback:
+it lowers T-pose arms, adds breathing and sway, and adds subtle speaking nods.
+Each action can contain multiple `.vrma` files; uploads receive numbered names
+such as `idle1`, `thinking1`, `speaking1`, or `wave1`. Persona chooses a clip
+from the action whenever that action runs, and the configured clip automatically
+replaces the procedural fallback for that action.
 
 Custom actions include a name, description, and trigger scenario. Persona adds
 that metadata to its MCP animation tool so a connected agent can understand
@@ -187,8 +187,8 @@ public/assets/
 
 Define each packaged model and animation action in `library.json`. Action
 records carry their public name, description, trigger scenario, runtime type,
-and zero or more asset paths. The permanent `system-idle` and
-`system-speaking` records may have empty asset lists. Mirror every declared
+and zero or more asset paths. The permanent `system-idle`, `system-thinking`,
+and `system-speaking` records may have empty asset lists. Mirror every declared
 media path in `manifest.json`, then
 complete its license and source fields and set `distributionAllowed` to `true`.
 Remove the VRM and VRMA ignore rules only when the chosen files are safe to

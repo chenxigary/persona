@@ -23,8 +23,8 @@ descriptions, trigger scenarios, runtime types, and media paths. The release ass
 derives its expected media from this catalog instead of a second hard-coded
 list.
 
-The active catalog contains the permanent Idle and Speaking action slots but
-declares no character media during first-run development.
+The active catalog contains the permanent Idle, Thinking, and Speaking action
+slots but declares no character media during first-run development.
 `library.json.example` and `manifest.json.example` are complete, directly
 copyable examples for the ignored local test media. Packaged models live under
 `public/assets/models/` and animations under `public/assets/animations/`. When
@@ -44,9 +44,9 @@ renderer cannot turn the protocol into an arbitrary local-file reader.
 Packaged files are never mutated. Editing packaged action metadata creates a
 copy-on-write override, and removing one creates a user-level visibility
 tombstone. Resetting packaged actions clears only those overrides and
-tombstones; user-created actions and uploaded clips remain unchanged. Idle and
-Speaking cannot be edited or removed, but users can add or remove their local
-clips.
+tombstones; user-created actions and uploaded clips remain unchanged. Idle,
+Thinking, and Speaking cannot be edited or removed, but users can add or remove
+their local clips.
 
 The store returns one active snapshot containing the default model, character
 size, merged model records, merged action records with clip collections, and the
@@ -59,11 +59,12 @@ asset-contract tests in sync when adding fields or changing validation.
 An empty packaged catalog is a supported first-run state. The application opens
 Settings and does not create the avatar window or start the audio listener until
 the merged snapshot has a valid `default_model_id`. Importing the first user
-model selects it automatically. Empty Idle or Speaking actions use an empty
-animation URL list, which activates the renderer's lightweight
+model selects it automatically. Empty Idle, Thinking, or Speaking actions use
+an empty animation URL list, which activates the renderer's lightweight
 procedural-motion fallback. The fallback lowers T-pose arms and adds breathing,
-sway, head motion, and speaking nods. A configured VRMA clip takes priority for
-its action and disables the fallback until that action becomes empty again.
+sway, and head motion; Speaking also adds subtle nods. A configured VRMA clip
+takes priority for its action and disables the fallback until that action
+becomes empty again.
 
 ## MCP contract
 

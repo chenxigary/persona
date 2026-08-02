@@ -37,7 +37,7 @@ function parseProtocolUrl(rawUrl, protocolScheme = "persona") {
       return commands;
     }
     if (action === "thinking") {
-      return [{ type: "event", event: voiceState("idle") }];
+      return [{ type: "event", event: voiceState("thinking") }];
     }
     if (action === "inactive" || action === "stop") {
       return [{ type: "event", event: voiceState("idle", "inactive") }];

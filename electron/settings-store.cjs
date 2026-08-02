@@ -15,7 +15,7 @@ const {
   sanitizeVoiceSource,
 } = require("./voice-source.cjs");
 
-const SETTINGS_SCHEMA_VERSION = 5;
+const SETTINGS_SCHEMA_VERSION = 6;
 const DEFAULT_PACKAGED_LIBRARY_PATH = path.join(
   __dirname,
   "..",
@@ -306,7 +306,9 @@ function migrateLegacyAnimations(animations, packagedLibrary) {
 
     const inferredType = inferAnimationType(metadata.animation_name);
     const systemAnimation =
-      inferredType === "IDLE" || inferredType === "TALK"
+      inferredType === "IDLE" ||
+      inferredType === "THINKING" ||
+      inferredType === "TALK"
         ? systemByType.get(inferredType)
         : null;
     const animationId = systemAnimation?.id ?? animation.id;
@@ -319,7 +321,14 @@ function migrateLegacyAnimations(animations, packagedLibrary) {
       userAnimations.push({ id: animationId, ...metadata });
     }
 
-    const names = usedClipNames.get(animationId) ?? new Set();
+    const names =
+      usedClipNames.get(animationId) ??
+      new Set(
+        Array.from(
+          { length: systemAnimation?.asset_paths.length ?? 0 },
+          (_, index) => `${animationName}${index + 1}`,
+        ),
+      );
     usedClipNames.set(animationId, names);
     const clips = animationClips[animationId] ?? [];
     clips.push({
@@ -333,11 +342,61 @@ function migrateLegacyAnimations(animations, packagedLibrary) {
   return { animationClips, userAnimations };
 }
 
+function migrateStructuredAnimations(parsed, packagedLibrary) {
+  const animations = sanitizeUserAnimations(parsed.animations);
+  const knownAnimationIds = new Set([
+    ...packagedLibrary.animations.map((animation) => animation.id),
+    ...animations.map((animation) => animation.id),
+  ]);
+  const animationClips = sanitizeAnimationClips(
+    parsed.animation_clips,
+    knownAnimationIds,
+  );
+  const systemByType = new Map(
+    packagedLibrary.animations
+      .filter((animation) => SYSTEM_ANIMATION_IDS.has(animation.id))
+      .map((animation) => [animation.animation_type, animation]),
+  );
+  const userAnimations = [];
+
+  for (const animation of animations) {
+    const systemAnimation = systemByType.get(
+      inferAnimationType(animation.animation_name),
+    );
+    if (!systemAnimation) {
+      userAnimations.push(animation);
+      continue;
+    }
+
+    const existingClips = animationClips[systemAnimation.id] ?? [];
+    const sourceClips = animationClips[animation.id] ?? [];
+    const names = new Set([
+      ...Array.from(
+        { length: systemAnimation.asset_paths.length },
+        (_, index) => `${systemAnimation.animation_name}${index + 1}`,
+      ),
+      ...existingClips.map((clip) => clip.clip_name),
+    ]);
+    animationClips[systemAnimation.id] = [
+      ...existingClips,
+      ...sourceClips.map((clip) => ({
+        ...clip,
+        clip_name: nextClipName(systemAnimation.animation_name, names),
+      })),
+    ];
+    if (animation.id !== systemAnimation.id) {
+      delete animationClips[animation.id];
+    }
+  }
+
+  return { animationClips, userAnimations };
+}
+
 function safeReadState(settingsPath, packagedLibrary) {
   const fallback = defaultState(packagedLibrary);
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-    if (![1, 2, 3, 4, SETTINGS_SCHEMA_VERSION].includes(parsed?.schema_version)) {
+    if (![1, 2, 3, 4, 5, SETTINGS_SCHEMA_VERSION].includes(parsed?.schema_version)) {
       return { migrated: false, state: fallback };
     }
     const { hidden, overrides } = packagedUserLayers(parsed, packagedLibrary);
@@ -365,21 +424,14 @@ function safeReadState(settingsPath, packagedLibrary) {
     };
 
     if (parsed.schema_version !== SETTINGS_SCHEMA_VERSION) {
-      if ([3, 4].includes(parsed.schema_version)) {
-        const animations = sanitizeUserAnimations(parsed.animations);
-        const knownAnimationIds = new Set([
-          ...packagedLibrary.animations.map((animation) => animation.id),
-          ...animations.map((animation) => animation.id),
-        ]);
+      if ([3, 4, 5].includes(parsed.schema_version)) {
+        const migrated = migrateStructuredAnimations(parsed, packagedLibrary);
         return {
           migrated: true,
           state: {
             ...common,
-            animations,
-            animation_clips: sanitizeAnimationClips(
-              parsed.animation_clips,
-              knownAnimationIds,
-            ),
+            animations: migrated.userAnimations,
+            animation_clips: migrated.animationClips,
           },
         };
       }
@@ -692,7 +744,7 @@ function createSettingsStore({
     );
     if (packaged) {
       if (SYSTEM_ANIMATION_IDS.has(animationId)) {
-        throw new Error("Idle and Speaking are permanent system actions.");
+        throw new Error("Idle, Thinking, and Speaking are permanent system actions.");
       }
       if (state.hidden_packaged_animation_ids.includes(animationId)) {
         throw new Error("This packaged animation action is currently removed.");
@@ -747,7 +799,7 @@ function createSettingsStore({
 
   function deleteAnimation(animationId) {
     if (SYSTEM_ANIMATION_IDS.has(animationId)) {
-      throw new Error("Idle and Speaking cannot be removed.");
+      throw new Error("Idle, Thinking, and Speaking cannot be removed.");
     }
     const packaged = packagedLibrary.animations.find(
       (animation) => animation.id === animationId,

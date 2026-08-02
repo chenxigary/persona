@@ -8,6 +8,7 @@ const LIBRARY_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const ANIMATION_NAME_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const ANIMATION_TYPES = new Set([
   "IDLE",
+  "THINKING",
   "GREETING",
   "TALK",
   "HAPPY",
@@ -22,6 +23,16 @@ const SYSTEM_ANIMATIONS = Object.freeze([
     animation_trigger_scenario:
       "Used automatically while Persona is waiting and not speaking.",
     animation_type: "IDLE",
+    asset_paths: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: "system-thinking",
+    animation_name: "thinking",
+    animation_description:
+      "A subtle contemplative loop while the assistant prepares a response.",
+    animation_trigger_scenario:
+      "Used automatically after response generation starts and before voice output begins.",
+    animation_type: "THINKING",
     asset_paths: Object.freeze([]),
   }),
   Object.freeze({
@@ -40,6 +51,7 @@ const SYSTEM_ANIMATION_IDS = new Set(
 );
 const ANIMATION_TYPE_BY_RESERVED_NAME = new Map([
   ["idle", "IDLE"],
+  ["thinking", "THINKING"],
   ["greeting", "GREETING"],
   ["talk", "TALK"],
   ["speaking", "TALK"],
@@ -189,10 +201,11 @@ function validatePackagedLibrary(value) {
     if (
       !SYSTEM_ANIMATION_IDS.has(animation.id) &&
       (animation.animation_type === "IDLE" ||
+        animation.animation_type === "THINKING" ||
         animation.animation_type === "TALK")
     ) {
       throw new Error(
-        "Idle and speaking system roles belong to their permanent action slots.",
+        "Idle, thinking, and speaking system roles belong to their permanent action slots.",
       );
     }
   }

@@ -12,6 +12,14 @@
       "asset_paths": []
     },
     {
+      "id": "system-thinking",
+      "animation_name": "thinking",
+      "animation_description": "A subtle contemplative loop while the assistant prepares a response.",
+      "animation_trigger_scenario": "Used automatically after response generation starts and before voice output begins.",
+      "animation_type": "THINKING",
+      "asset_paths": []
+    },
+    {
       "id": "system-speaking",
       "animation_name": "speaking",
       "animation_description": "Natural conversational body movement while the character speaks.",

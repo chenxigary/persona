@@ -694,6 +694,10 @@ function refreshTrayMenu() {
           click: () => handleBridgeEvent(voiceState("listening")),
         },
         {
+          label: "Preview thinking",
+          click: () => handleBridgeEvent(voiceState("thinking")),
+        },
+        {
           label: "Preview speaking",
           click: () => handleBridgeEvent(voiceState("speaking")),
         },

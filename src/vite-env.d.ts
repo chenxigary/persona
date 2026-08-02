@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 type VoicePhase = 'inactive' | 'starting' | 'active' | 'stopping';
-type VoiceActivity = 'idle' | 'listening' | 'speaking';
+type VoiceActivity = 'idle' | 'listening' | 'thinking' | 'speaking';
 
 interface VoiceState {
   activity: VoiceActivity;
@@ -32,6 +32,7 @@ interface PersonaLightingSettings {
 
 type PersonaAnimationType =
   | 'IDLE'
+  | 'THINKING'
   | 'GREETING'
   | 'TALK'
   | 'HAPPY'
