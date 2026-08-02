@@ -33,7 +33,7 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 | 窗口点击穿透 | **In Progress** | 透明区域已可穿透，托盘可切换 Always interactive，待日常使用验证 |
 | 动作过渡不闪 T-pose | **In Progress** | 已改为按 mixer 权重加权混合，待导入 VRMA 后人眼验收 |
 | 自定义 VRMA 动作库 | **In Progress** | pixiv VRoid Motion Pack（7 个一次性动作）已验证格式与许可；程序化动作与 VRMA 的混合已修复，待实际导入与观感验收 |
-| External 事件契约验证 | **Not Started** | 已提升到 Next，作为进程匹配的对冲 |
+| External 事件契约验证 | **Paused** | 发送端脚本已就绪并可用；接真实本地管线的工作暂停 |
 | 稳定的 macOS Persona.app | **Not Started** | 需要打包、权限回归和后续签名策略 |
 | LiteAvatar renderer | **Not Started** | 等 Persona 事件契约稳定后开始 |
 
@@ -72,7 +72,6 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 
 | Initiative | 预期价值 | 关键依赖 |
 | --- | --- | --- |
-| External 事件契约最小验证 | 自建管线 POST state + audio-level 跑通端到端，绕开进程匹配与 Core Audio tap 这一整类风险 | **发送端已就绪**：`node scripts/check-external-events.cjs`，剩下的是接一条真实本地管线 |
 | Windows / Linux 干扰验证 | 确认 WASAPI loopback 与 `pw-record` 是否同样影响宿主 | 各平台一台可测机器 |
 | VRMA 动作库 | 更自然的 Idle、Speaking、Wave 和情绪动作 | 找到兼容且授权清楚的 VRMA 素材 |
 | 程序化动作设置 | 可调呼吸、点头、摇摆和手臂角度，可一键关闭 | Appearance 设置 schema 与持久化；**需要先定义每骨骼的仲裁规则**，现在是整体二选一 |
@@ -88,14 +87,15 @@ In Progress。这条口径是被实践修正过的：`ChatGPT/Codex 音量口型
 | --- | --- | --- |
 | LiteAvatar adapter | 写实角色复用相同的 state、audio-level 和 MCP 事件 | 模型许可、GPU/CPU 性能、运行时依赖 |
 | Renderer 切换层 | Persona VRM 与 LiteAvatar 可切换而不改语音管线 | 先冻结统一 Avatar Driver contract |
-| 完整本地语音管线 | 本地 ASR/LLM/TTS 驱动角色（Next 的 External 验证是它的前置） | 延迟、设备管理和安装复杂度 |
+| External 事件契约接真实管线 | 自建管线 POST state + audio-level，绕开进程匹配与 Core Audio tap 这一整类风险 | **已暂停**。发送端 `scripts/check-external-events.cjs` 可用，随时能重启这条线 |
+| 完整本地语音管线 | 本地 ASR/LLM/TTS 驱动角色（External 契约是它的前置） | 延迟、设备管理和安装复杂度 |
 | 可选 OpenAI Realtime | 需要更精确事件和低延迟时再评估 | API 成本、Key 管理和隐私边界 |
 | 签名与分发 | 可安装、可升级的 macOS 应用 | Apple Developer ID、公证和资源授权 |
 
 ## 优先级与取舍
 
 1. **Must:** Voice Chat 稳定、口型可靠、无素材时不保持 T-pose、**Persona 不得损害宿主应用**。
-2. **Should:** External 契约验证、VRMA 个性化、MCP 语义动作、诊断能力、稳定打包。
+2. **Should:** VRMA 个性化、MCP 语义动作、诊断能力、稳定打包。
 3. **Could:** 本地完整语音管线、更多角色和跨平台打包。
 4. **Not now:** 在 Persona 基线稳定前重新引入 OpenAI Realtime 或把 LiteAvatar
    直接耦合进当前 renderer。
@@ -107,6 +107,12 @@ Later。交换条件是先获得一个无需 API Key、可稳定日常使用的�
 "Voice Chat 稳定"完全架在 ChatGPT 桌面端上，而这恰恰是本文档自己标记为最不可控的
 依赖——没有官方跨进程事件流、靠进程名匹配、且已证实会双向干扰。External 通道
 在 Persona 里已经存在，验活成本很低，能在上游某次更新打断进程匹配时兜底。
+
+第三次调整（2026-08-02）：**本地 speech-to-speech 方向暂停**，External 契约从 Next
+退回 Later。接受的代价要写明白——语音这一半继续完全依赖 ChatGPT 桌面端，靠进程名匹配
+和 Core Audio tap 维系，上游任何一次改动打断进程匹配就没有退路。发送端脚本
+`scripts/check-external-events.cjs` 保留可用，重启这条线的成本很低。在此期间精力集中在
+视觉侧：把 Now 的验收欠账清掉、VRMA 动作库、MCP 语义动作。
 
 ## 风险与缓解
 
