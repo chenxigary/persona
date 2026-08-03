@@ -67,7 +67,9 @@ Avatar 的可用地区和具体入口可能不同，以 Flow 当前界面为准�
 2. 初稿可选择 Nano Banana 2 Lite；需要更高细节时再改用 Nano Banana 2 或 Pro。
 3. 画幅选择 **9:16**。
 4. 粘贴下面的 Prompt，并替换方括号变量。
-5. 真人 Avatar 用户在 Prompt 开头保留 `@me`；虚构角色删除该行。
+5. 真人 Avatar 用户在 Prompt 开头保留 `@me`，并删除 `Character: [CHARACTER]`，避免文字
+   外貌与本人 Avatar 冲突；虚构角色删除 `@me` 和 “referenced avatar” 句，并完整填写
+   `CHARACTER`。
 6. 生成并筛选锚点图，必要时使用“锚点修正 Prompt”局部重做。
 7. 将最终图片保存在 Flow 项目中，并下载为 `anchor-neutral.png`。
 
@@ -99,7 +101,8 @@ dramatic perspective, cropped head, cropped hands, extra fingers, open mouth,
 visible teeth, props, other people, or background motion.
 ```
 
-虚构角色版本：删除第一段 `@me` 和 “referenced avatar” 句，完整填写 `CHARACTER`。
+真人 Avatar 版本：保留 `@me` 和 “referenced avatar” 句，删除 `Character: [CHARACTER]`。
+虚构角色版本：删除 `@me` 和 “referenced avatar” 句，完整填写 `CHARACTER`。
 
 ### 3.3 锚点图修正 Prompt
 
@@ -169,13 +172,33 @@ subtitle, or logo.
 
 ```text
 Correction for this take only: keep every accepted visual element unchanged.
-Fix only [IDENTITY DRIFT / LOOP SEAM / EXCESSIVE MOTION / RAPID MOUTH MOVEMENT /
-MOUTH NOT CLOSED]. Reduce the affected motion amplitude by 50 percent and begin
-the smooth return to the supplied end frame at 4.3 seconds. Do not introduce
-any new action, camera change, or visual element.
+Fix only this issue: [ISSUE]. If the issue is excessive motion, reduce only the
+affected motion amplitude by 50 percent. Preserve all unrelated accepted
+motion. Do not introduce any new action, camera change, or visual element.
 ```
 
-### 4.4 嘴部动作过快修正 Prompt
+### 4.4 身份漂移修正 Prompt
+
+```text
+Keep the accepted camera, framing, wardrobe, background, lighting, pose, and
+motion unchanged. Fix only identity drift. Treat the supplied start and end
+frames as the highest-priority identity references. Preserve the exact same
+face shape, eyes, nose, lips, jawline, skin tone, apparent age, hairstyle, and
+facial proportions in every frame, including during mouth movement and nods.
+Do not average, redesign, beautify, age, or replace the face.
+```
+
+### 4.5 首帧没有闭嘴修正 Prompt
+
+```text
+Keep the exact identity and all accepted motion unchanged. Fix only the opening
+of the video. The first frame must match the supplied neutral start frame with
+the lips naturally and fully closed, no teeth visible, and the jaw relaxed.
+Hold that closed-mouth neutral pose briefly before smoothly beginning the
+speaking motion. Do not change the camera, crop, lighting, background, or pose.
+```
+
+### 4.6 嘴部动作过快修正 Prompt
 
 ```text
 Keep the exact identity, framing, pose, camera, wardrobe, lighting, background,
@@ -185,7 +208,7 @@ moments between phrases. Reduce jaw travel and mouth-motion speed by 40 percent.
 No exaggerated vowels, rapid chewing motion, repeated cycles, or frozen mouth.
 ```
 
-### 4.5 循环接缝修正 Prompt
+### 4.7 循环接缝修正 Prompt
 
 ```text
 Keep the exact identity and all accepted motion unchanged. Fix only the loop
@@ -235,9 +258,33 @@ speaking-c03-lite-p1.mp4
 3. 下载视频并命名为 `speaking-selected.mp4`。
 4. 下载最终锚点图并命名为 `anchor-neutral.png`。
 5. 保留实际使用的 Prompt、模型名、生成日期和候选评分。
+6. 不要因为 Prompt 写了 “No audible speech” 就假设文件没有音轨；交付 S4b 前必须实际
+   检查并移除视频音轨。
 
 Flow 输出可能包含 SynthID 或地区要求的可见水印。遵守当前界面和当地要求，不裁切、
 遮挡或规避强制来源标记。
+
+### 6.1 Mac 最小静音处理
+
+Mac 尚未安装 FFmpeg 时，只需安装一次：
+
+```bash
+brew install ffmpeg
+```
+
+移除音轨，同时不重复压缩视频：
+
+```bash
+ffmpeg -i speaking-selected.mp4 -map 0:v:0 -c:v copy -an speaking.mp4
+```
+
+检查输出中是否只剩视频流：
+
+```bash
+ffprobe -v error -show_entries stream=codec_type -of default=noprint_wrappers=1 speaking.mp4
+```
+
+正确结果只应显示 `codec_type=video`。
 
 ## 7. 可选 Prompt 库
 
@@ -321,5 +368,6 @@ Speaking-motion score:
 Anatomy/wardrobe score:
 Composition/background score:
 Visible watermark requirement:
+Audio removed and verified: yes / no
 Notes:
 ```
