@@ -5,7 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-function getConnectSource() {
+function getDirective(name) {
   const indexPath = path.join(__dirname, "..", "index.html");
   const index = fs.readFileSync(indexPath, "utf8");
   const policy = index.match(
@@ -16,8 +16,10 @@ function getConnectSource() {
   return policy
     .split(";")
     .map((directive) => directive.trim())
-    .find((directive) => directive.startsWith("connect-src "));
+    .find((directive) => directive.startsWith(`${name} `));
 }
+
+const getConnectSource = () => getDirective("connect-src");
 
 test("allows embedded VRM textures to load through blob fetches", () => {
   const connectSource = getConnectSource();
@@ -35,4 +37,22 @@ test("allows only Persona's local asset protocol for imported character media", 
   const connectSource = getConnectSource();
   assert.ok(connectSource, "Content Security Policy must define connect-src");
   assert.match(connectSource, /(?:^|\s)persona-asset:(?:\s|$)/);
+});
+
+test("allows LiteAvatar frames only as local image content", () => {
+  const imageSource = getDirective("img-src");
+  const connectSource = getConnectSource();
+  assert.ok(imageSource, "Content Security Policy must define img-src");
+  assert.ok(connectSource, "Content Security Policy must define connect-src");
+  assert.match(imageSource, /(?:^|\s)persona-avatar:(?:\s|$)/);
+  assert.doesNotMatch(connectSource, /(?:^|\s)persona-avatar:(?:\s|$)/);
+});
+
+test("allows S4b clips only as local media content", () => {
+  const mediaSource = getDirective("media-src");
+  const connectSource = getConnectSource();
+  assert.ok(mediaSource, "Content Security Policy must define media-src");
+  assert.ok(connectSource, "Content Security Policy must define connect-src");
+  assert.match(mediaSource, /(?:^|\s)persona-s4b:(?:\s|$)/);
+  assert.doesNotMatch(connectSource, /(?:^|\s)persona-s4b:(?:\s|$)/);
 });

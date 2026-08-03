@@ -21,6 +21,79 @@ interface AudioListenerStatus {
   source: string | null;
 }
 
+type AvatarDriverRuntimePhase =
+  | 'off'
+  | 'starting'
+  | 'ready'
+  | 'failed'
+  | 'stopped';
+
+interface AvatarDriverRuntimeStatusBase {
+  driverId?: 'liteavatar' | 's4b';
+  error: string | null;
+  phase: AvatarDriverRuntimePhase;
+}
+
+interface LiteAvatarDriverRuntimeStatus extends AvatarDriverRuntimeStatusBase {
+  audioDroppedBeforeReady: number;
+  audioDroppedOutsideSpeech: number;
+  audioInputBytes: number;
+  audioSentBytes: number;
+  avatarName: string;
+  device: string;
+  fps: number | null;
+  frameSequence: number;
+  frames: number;
+  height: number;
+  invalidMessages: number;
+  loadSeconds: number | null;
+  processId: number | null;
+  restartCount: number;
+  rssMb: number | null;
+  runtimeAvailable: boolean;
+  sampleRate: number;
+  speechFrames: number;
+  staleFrames: number;
+  swapDeltaMb: number | null;
+  systemFreeMb: number | null;
+  width: number;
+}
+
+interface S4bDriverRuntimeStatus extends AvatarDriverRuntimeStatusBase {
+  clipCount: number;
+  driverId: 's4b';
+  loadMs: number | null;
+  packId: string | null;
+  packName: string | null;
+  runtimeAvailable: boolean;
+  surface: 's4b';
+}
+
+type AvatarDriverRuntimeStatus =
+  | LiteAvatarDriverRuntimeStatus
+  | S4bDriverRuntimeStatus;
+
+interface S4bStateClip {
+  activity: VoiceActivity;
+  playbackRate: number;
+  startOffsetMs: number;
+  url: string;
+}
+
+interface S4bAvatarPack {
+  background: 'alpha' | 'opaque';
+  clips: Record<VoiceActivity, S4bStateClip>;
+  crossFadeMs: number;
+  height: number;
+  id: string;
+  mouthGate: {
+    closeDelayMs: number;
+    openThreshold: number;
+  };
+  name: string;
+  width: number;
+}
+
 interface PersonaLightingSettings {
   tone_mapping: 'none' | 'aces';
   exposure: number;
@@ -135,13 +208,39 @@ type AvatarBridgeEvent =
       requestId?: number;
     }
   | { type: 'listener-status'; status: AudioListenerStatus }
-  | { type: 'bridge-status'; connected: boolean };
+  | { type: 'bridge-status'; connected: boolean }
+  | { type: 'avatar-driver-status'; status: AvatarDriverRuntimeStatus }
+  | { type: 'avatar-state-pack'; pack: S4bAvatarPack }
+  | {
+      type: 'avatar-frame';
+      height: number;
+      sequence: number;
+      sid: string;
+      url: string;
+      width: number;
+    };
 
 interface Window {
   personaBridge?: {
-    getSnapshot(): Promise<AvatarBridgeEvent | null>;
+    getSnapshot(): Promise<AvatarBridgeEvent | AvatarBridgeEvent[] | null>;
     hide(): void;
+    onFrameAdjustmentMode(listener: (active: boolean) => void): () => void;
+    onFramePointerHold(listener: (held: boolean) => void): () => void;
+    onWindowMoving(listener: (moving: boolean) => void): () => void;
+    reportS4bMouthTransition(payload: {
+      active: boolean;
+      currentTime: number | null;
+      level: number;
+      paused: boolean;
+      reason: 'open-threshold' | 'silence-envelope' | 'voice-not-speaking';
+      voiceActivity: VoiceActivity;
+    }): void;
     resizeWindow(size: { height: number; width: number }): void;
+    setFrameAdjustmentMode(active: boolean): void;
+    setFramePointerGeometry(payload: {
+      frameRect: { bottom: number; left: number; right: number; top: number } | null;
+      visible: boolean;
+    }): void;
     setPointerRegion(pointerOverCharacter: boolean): void;
     showSettings(): void;
     subscribe(listener: (event: AvatarBridgeEvent) => void): () => void;

@@ -12,6 +12,8 @@ import type { ScreenRect } from '../pointer-region';
 
 interface CharacterFrameProps {
   characterSize: number;
+  /** Pins hover chrome and mouse capture for the duration of a frame gesture. */
+  onInteractionChange: (active: boolean) => void;
   /** Live size while a corner is being dragged; null commits the stored size. */
   onPreviewSize: (size: number | null) => void;
   rect: ScreenRect | null;
@@ -22,6 +24,7 @@ const CORNERS = ['nw', 'ne', 'sw', 'se'] as const;
 
 export function CharacterFrame({
   characterSize,
+  onInteractionChange,
   onPreviewSize,
   rect,
   visible,
@@ -67,9 +70,10 @@ export function CharacterFrame({
         size: characterSize,
         startRadius: dragRadius(centre, { x: event.clientX, y: event.clientY }),
       };
+      onInteractionChange(true);
       (event.target as Element).setPointerCapture?.(event.pointerId);
     },
-    [characterSize, rect],
+    [characterSize, onInteractionChange, rect],
   );
 
   useEffect(() => {
@@ -88,17 +92,19 @@ export function CharacterFrame({
     };
     const handleUp = (event: PointerEvent) => {
       const origin = scaling.current;
-      if (!origin) return;
-      scaling.current = null;
-      const size = sizeFromDrag(
-        origin.size,
-        origin.startRadius,
-        dragRadius(origin.centre, { x: event.clientX, y: event.clientY }),
-      );
-      // Persist once at the end. setCharacterSize writes to disk, so calling it
-      // for every pointermove would hammer it for the whole drag.
-      onPreviewSize(null);
-      void window.personaSettings?.setCharacterSize(size);
+      if (origin) {
+        scaling.current = null;
+        const size = sizeFromDrag(
+          origin.size,
+          origin.startRadius,
+          dragRadius(origin.centre, { x: event.clientX, y: event.clientY }),
+        );
+        // Persist once at the end. setCharacterSize writes to disk, so calling it
+        // for every pointermove would hammer it for the whole drag.
+        onPreviewSize(null);
+        void window.personaSettings?.setCharacterSize(size);
+      }
+      onInteractionChange(false);
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
@@ -107,8 +113,9 @@ export function CharacterFrame({
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
+      onInteractionChange(false);
     };
-  }, [onPreviewSize]);
+  }, [onInteractionChange, onPreviewSize]);
 
   if (!box) return null;
 
@@ -117,6 +124,7 @@ export function CharacterFrame({
       aria-hidden={!visible}
       className={`character-frame${visible ? ' is-visible' : ''}`}
       data-testid="character-frame"
+      onPointerDownCapture={() => onInteractionChange(true)}
       style={{
         height: `${box.height}px`,
         left: `${box.left}px`,

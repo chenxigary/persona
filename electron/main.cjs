@@ -17,6 +17,7 @@ const {
   Tray,
 } = require("electron");
 const { createBridgeServer, DEFAULT_PORT } = require("./bridge-server.cjs");
+const { createDebugLogger } = require("./debug-logger.cjs");
 const { createPersonaMcpHandler } = require("./mcp-server.cjs");
 const {
   createMcpSettingsStatus,
@@ -27,6 +28,18 @@ const {
   getHyprlandWindowPlacement,
 } = require("./hyprland-window.cjs");
 const { createAudioListener } = require("./audio-listener.cjs");
+const {
+  LITEAVATAR_DRIVER_ID,
+  S4B_DRIVER_ID,
+  createAvatarDriverHost,
+  resolveAvatarDriver,
+} = require("./avatar-driver.cjs");
+const {
+  LiteAvatarAdapter,
+  createLiteAvatarFrameResponse,
+  resolveLiteAvatarWorkerPath,
+} = require("./liteavatar-adapter.cjs");
+const { S4bAdapter } = require("./s4b-pack.cjs");
 const { listVoiceSources } = require("./voice-source-discovery.cjs");
 const { isAllowedRendererNavigation } = require("./navigation-policy.cjs");
 const { snapshotHasConfiguredModel } = require("./model-readiness.cjs");
@@ -40,6 +53,7 @@ const {
   settingsPatternFromVoiceSource,
 } = require("./voice-source.cjs");
 const {
+  FramePointerHandoff,
   WindowInteractionController,
   applyInteractionToWindow,
 } = require("./window-interaction.cjs");
@@ -57,10 +71,18 @@ const SETTINGS_WINDOW_BACKGROUND = {
   light: "#e6e8ec",
 };
 const PERSONA_ASSET_SCHEME = "persona-asset";
+const PERSONA_AVATAR_SCHEME = "persona-avatar";
+const PERSONA_S4B_SCHEME = "persona-s4b";
 const startInBackground = process.argv.includes("--background");
 const startInSettings = process.argv.includes("--settings");
 const protocolScheme = "persona";
 const debugEnabled = process.env.PERSONA_DEBUG === "1";
+const debugLogger = createDebugLogger({
+  enabled: debugEnabled,
+  ...(process.env.PERSONA_DEBUG_LOG
+    ? { filePath: process.env.PERSONA_DEBUG_LOG }
+    : {}),
+});
 
 let avatarWindow = null;
 let settingsWindow = null;
@@ -69,15 +91,144 @@ let settingsStore = null;
 let bridge = null;
 let mcpHandler = null;
 let isQuitting = false;
-let latestEvent = null;
 let latestListenerStatus = null;
 let latestVoiceState = null;
 let audioListener = null;
+let avatarDriver = null;
+let liteAvatarAdapter = null;
+let s4bAdapter = null;
 let tray = null;
+let debugResourceTimer = null;
+let lastDebugAudioLevelAt = 0;
 const windowInteraction = new WindowInteractionController();
+const framePointerHandoff = new FramePointerHandoff();
+const FRAME_POINTER_POLL_INTERVAL_MS = 33;
+let frameAdjustmentMode = false;
+let framePointerHeld = false;
+let framePointerPollTimer = null;
+let rendererPointerOverCharacter = false;
+let windowMoveReleaseTimer = null;
+let windowMoving = false;
 
 function syncWindowInteraction(change) {
   applyInteractionToWindow(avatarWindow, change);
+}
+
+function syncPointerInteraction() {
+  syncWindowInteraction(
+    windowInteraction.setPointerOverCharacter(
+      rendererPointerOverCharacter || framePointerHeld,
+    ),
+  );
+}
+
+function syncActiveInteraction() {
+  syncWindowInteraction(
+    windowInteraction.setInteractionActive(windowMoving || frameAdjustmentMode),
+  );
+}
+
+function sendAvatarWindowEvent(channel, payload) {
+  if (!avatarWindow || avatarWindow.isDestroyed()) return;
+  if (avatarWindow.webContents.isDestroyed()) return;
+  avatarWindow.webContents.send(channel, payload);
+}
+
+function setFramePointerHeld(window, held) {
+  if (avatarWindow !== window || window.isDestroyed()) return;
+  const next = Boolean(held);
+  if (framePointerHeld === next) return;
+  framePointerHeld = next;
+  syncPointerInteraction();
+  sendAvatarWindowEvent("persona:frame-pointer-hold", next);
+  debugLog("frame pointer hold", next);
+}
+
+function stopFramePointerPoll() {
+  clearInterval(framePointerPollTimer);
+  framePointerPollTimer = null;
+}
+
+function pollFramePointer(window) {
+  if (avatarWindow !== window || window.isDestroyed() || !window.isVisible()) {
+    stopFramePointerPoll();
+    return;
+  }
+  const sample = framePointerHandoff.sample({
+    bounds: window.getBounds(),
+    cursor: screen.getCursorScreenPoint(),
+  });
+  if (sample.changed) setFramePointerHeld(window, sample.held);
+}
+
+function setFramePointerGeometry(window, payload) {
+  if (avatarWindow !== window || window.isDestroyed()) return;
+  const frameRect = payload?.visible === true ? payload.frameRect : null;
+  const reset = framePointerHandoff.setFrameRect(frameRect);
+  if (reset.changed) setFramePointerHeld(window, reset.held);
+  if (!framePointerHandoff.frameRect) {
+    stopFramePointerPoll();
+    return;
+  }
+  pollFramePointer(window);
+  if (framePointerPollTimer != null) return;
+  framePointerPollTimer = setInterval(
+    () => pollFramePointer(window),
+    FRAME_POINTER_POLL_INTERVAL_MS,
+  );
+  framePointerPollTimer.unref?.();
+}
+
+function resetFramePointerHandoff(window) {
+  stopFramePointerPoll();
+  const reset = framePointerHandoff.reset();
+  rendererPointerOverCharacter = false;
+  if (reset.changed) setFramePointerHeld(window, false);
+  else {
+    framePointerHeld = false;
+    syncPointerInteraction();
+  }
+}
+
+function resetWindowInteraction(window) {
+  resetFramePointerHandoff(window);
+  windowInteraction.reset();
+  syncPointerInteraction();
+  syncActiveInteraction();
+  syncWindowInteraction(windowInteraction.resolve());
+}
+
+function setFrameAdjustmentMode(active) {
+  const next = Boolean(active);
+  if (frameAdjustmentMode === next) return;
+  frameAdjustmentMode = next;
+  syncActiveInteraction();
+  sendAvatarWindowEvent("persona:frame-adjustment-mode", next);
+  debugLog("frame adjustment mode", next);
+  refreshTrayMenu();
+}
+
+function setWindowMoving(window, moving) {
+  if (avatarWindow !== window || window.isDestroyed()) return;
+  const next = Boolean(moving);
+  const changed = windowMoving !== next;
+  windowMoving = next;
+  syncActiveInteraction();
+  if (!changed) return;
+  if (!window.webContents.isDestroyed()) {
+    window.webContents.send("persona:window-moving", next);
+  }
+  debugLog("window moving", next);
+}
+
+function holdWindowInteractionForMove(window) {
+  clearTimeout(windowMoveReleaseTimer);
+  setWindowMoving(window, true);
+  windowMoveReleaseTimer = setTimeout(() => {
+    windowMoveReleaseTimer = null;
+    setWindowMoving(window, false);
+  }, 250);
+  windowMoveReleaseTimer.unref?.();
 }
 let hyprlandConfigured = false;
 let hyprlandConfiguring = false;
@@ -94,6 +245,16 @@ let mcpServerPort = Number(
 );
 let mcpAnimationCatalogSignature = null;
 const pendingRendererEvents = new Map();
+const rendererSnapshotEvents = new Map();
+const SNAPSHOT_EVENT_TYPES = new Set([
+  "audio-level",
+  "avatar-driver-status",
+  "avatar-frame",
+  "avatar-state-pack",
+  "bridge-status",
+  "listener-status",
+  "state",
+]);
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -105,23 +266,47 @@ protocol.registerSchemesAsPrivileged([
       corsEnabled: true,
     },
   },
+  {
+    scheme: PERSONA_AVATAR_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: PERSONA_S4B_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
 ]);
 app.setName("Persona");
 
 function debugLog(...values) {
-  if (!debugEnabled) return;
-  // One line per entry, with a timestamp, so a run can be replayed and checked
-  // mechanically. console.error pretty-prints objects across several lines,
-  // which makes the listener's lifecycle impossible to parse after the fact.
-  const parts = values.map((value) => {
-    if (typeof value === "string") return value;
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  });
-  console.error(`[persona] ${new Date().toISOString()} ${parts.join(" ")}`);
+  debugLogger.log(...values);
+}
+
+function startDebugResourceTelemetry() {
+  if (!debugEnabled || debugResourceTimer) return;
+  const sample = () => {
+    const processes = app.getAppMetrics().map((metric) => ({
+      cpuPercent: Math.round((metric.cpu?.percentCPUUsage ?? 0) * 10) / 10,
+      memoryMb:
+        Math.round(((metric.memory?.workingSetSize ?? 0) / 1024) * 10) / 10,
+      pid: metric.pid,
+      type: metric.type,
+    }));
+    debugLog("resource sample", { processes });
+  };
+  sample();
+  debugResourceTimer = setInterval(sample, 5_000);
+  debugResourceTimer.unref?.();
 }
 
 function positionWindow(window) {
@@ -211,6 +396,8 @@ async function hideOverlay() {
   debugLog("hide overlay");
   const targetWindow = avatarWindow;
   if (!targetWindow || targetWindow.isDestroyed()) return;
+  setFrameAdjustmentMode(false);
+  resetFramePointerHandoff(targetWindow);
   const placement = await getHyprlandWindowPlacement(process.pid);
   if (avatarWindow !== targetWindow || targetWindow.isDestroyed()) return;
   if (placement) {
@@ -221,8 +408,16 @@ async function hideOverlay() {
 
 function destroyOverlayForSetup() {
   clearTimeout(hyprlandConfigurationTimer);
+  clearTimeout(windowMoveReleaseTimer);
   hyprlandConfigurationGeneration += 1;
   hyprlandConfigurationTimer = null;
+  windowMoveReleaseTimer = null;
+  windowMoving = false;
+  frameAdjustmentMode = false;
+  stopFramePointerPoll();
+  framePointerHandoff.reset();
+  framePointerHeld = false;
+  rendererPointerOverCharacter = false;
   hyprlandConfigured = false;
   hyprlandConfiguring = false;
   hyprlandLastPosition = null;
@@ -287,6 +482,11 @@ function createWindow() {
     },
   });
   avatarWindow = window;
+  // Some adapters publish their complete surface only once during startup.
+  // Always flush those retained events into a newly created renderer, even if
+  // no later voice event happens while the document is loading.
+  rendererLoadHookAttached = true;
+  window.webContents.once("did-finish-load", flushPendingRendererEvents);
 
   window.setAlwaysOnTop(true, "floating");
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -295,8 +495,7 @@ function createWindow() {
   // would swallow clicks aimed at the applications underneath the transparent
   // area. Start pass-through and let the renderer re-enable interaction while
   // the pointer is over the character.
-  windowInteraction.reset();
-  syncWindowInteraction(windowInteraction.resolve());
+  resetWindowInteraction(window);
   window.once("ready-to-show", () => {
     if (window.isDestroyed()) return;
     positionWindow(window);
@@ -307,14 +506,20 @@ function createWindow() {
     window.setAlwaysOnTop(true, "floating");
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     window.setOpacity(1);
-    windowInteraction.reset();
-    syncWindowInteraction(windowInteraction.resolve());
+    resetWindowInteraction(window);
     scheduleHyprlandWindowConfiguration({
       force: true,
       position: hyprlandLastPosition,
       reposition: !hyprlandConfigured || hyprlandLastPosition != null,
     });
   });
+  // Chromium temporarily loses normal pointer tracking while a frameless
+  // macOS app-region is being dragged. Latch both renderer chrome and native
+  // mouse acceptance across that gap so auto pass-through cannot cancel the
+  // move it just started. Electron emits `move` continuously on macOS, so a
+  // short trailing debounce marks the end of the native gesture.
+  window.on("will-move", () => holdWindowInteractionForMove(window));
+  window.on("move", () => holdWindowInteractionForMove(window));
   window.on("close", (event) => {
     if (isQuitting) return;
     event.preventDefault();
@@ -323,7 +528,15 @@ function createWindow() {
   window.on("closed", () => {
     if (avatarWindow !== window) return;
     clearTimeout(hyprlandConfigurationTimer);
+    clearTimeout(windowMoveReleaseTimer);
+    stopFramePointerPoll();
+    framePointerHandoff.reset();
+    framePointerHeld = false;
+    rendererPointerOverCharacter = false;
+    frameAdjustmentMode = false;
     hyprlandConfigurationTimer = null;
+    windowMoveReleaseTimer = null;
+    windowMoving = false;
     hyprlandConfigured = false;
     hyprlandConfiguring = false;
     rendererLoadHookAttached = false;
@@ -432,6 +645,7 @@ function publishSettings(snapshot) {
   }
   refreshTrayMenu();
   if (!wasConfigured && modelConfigured) {
+    avatarDriver?.start();
     void audioListener?.start();
     showOverlay();
   } else if (wasConfigured && !modelConfigured) {
@@ -457,6 +671,7 @@ function resolveListenerProcessPattern(snapshot = settingsStore?.getSnapshot()) 
 function createConfiguredAudioListener(snapshot = settingsStore?.getSnapshot()) {
   const voiceSource = normalizeVoiceSource(snapshot?.voice_source);
   return createAudioListener({
+    emitPcm: avatarDriver?.requiresPcm ?? false,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     processPattern: resolveListenerProcessPattern(snapshot),
@@ -465,8 +680,11 @@ function createConfiguredAudioListener(snapshot = settingsStore?.getSnapshot()) 
       debugLog("listener activity", activity);
       handleBridgeEvent(voiceState(activity));
     },
-    onDebug: debugEnabled ? (nodes) => debugLog("listener output nodes", nodes) : null,
+    onDebug: debugEnabled
+      ? (...details) => debugLog("listener diagnostics", ...details)
+      : null,
     onLevel: (level) => handleBridgeEvent({ type: "audio-level", level }),
+    onPcm: (frame) => avatarDriver?.handlePcm(frame),
     onSession: (active) => {
       debugLog("listener session", active);
       handleBridgeEvent(voiceState(active ? "listening" : "idle", active ? "active" : "inactive"));
@@ -570,7 +788,9 @@ function ensureRendererLoadHook() {
 }
 
 function emitToRenderer(event) {
-  latestEvent = event;
+  if (SNAPSHOT_EVENT_TYPES.has(event.type)) {
+    rendererSnapshotEvents.set(event.type, event);
+  }
   pendingRendererEvents.set(event.type, event);
   if (!avatarWindow || avatarWindow.isDestroyed()) return;
   if (avatarWindow.webContents.isLoading()) {
@@ -582,7 +802,12 @@ function emitToRenderer(event) {
 }
 
 function handleBridgeEvent(event) {
-  if (event.type !== "audio-level" || event.level > 0.025) debugLog("event", event);
+  if (event.type !== "audio-level") {
+    debugLog("event", event);
+  } else if (event.level > 0.025 && Date.now() - lastDebugAudioLevelAt >= 250) {
+    lastDebugAudioLevelAt = Date.now();
+    debugLog("event", event);
+  }
   const canShowAvatar = hasConfiguredModel();
   if (event.type === "state") {
     latestVoiceState = event.state;
@@ -601,7 +826,10 @@ function handleBridgeEvent(event) {
   } else if (canShowAvatar && event.type === "animation") {
     showOverlay();
   }
-  if (canShowAvatar) emitToRenderer(event);
+  if (canShowAvatar) {
+    if (avatarDriver) avatarDriver.handleEvent(event);
+    else emitToRenderer(event);
+  }
 }
 
 function handleIntegrationEvent(event) {
@@ -634,6 +862,7 @@ function getMcpStatus() {
     windowVisible: avatarWindow?.isVisible() ?? false,
     voiceState: latestVoiceState,
     listener: latestListenerStatus,
+    avatarDriver: avatarDriver?.getStatus() ?? null,
   };
 }
 
@@ -674,6 +903,17 @@ function refreshTrayMenu() {
         { label: "Hide Persona", click: () => void hideOverlay() },
         { label: "Settings…", click: showSettings },
         { type: "separator" },
+        {
+          label: "Adjust position and size",
+          type: "checkbox",
+          checked: frameAdjustmentMode,
+          toolTip:
+            "Pin Persona's frame and mouse controls until you finish or press Escape.",
+          click: (item) => {
+            showOverlay();
+            setFrameAdjustmentMode(item.checked);
+          },
+        },
         {
           label: "Always interactive",
           type: "checkbox",
@@ -745,6 +985,12 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     app.setAppUserModelId("com.xikhar.persona");
     app.dock?.hide();
+    debugLog("run started", {
+      debugLog: debugLogger.filePath,
+      pid: process.pid,
+      requestedAvatarDriver: process.env.PERSONA_AVATAR_DRIVER || "vrm",
+    });
+    startDebugResourceTelemetry();
     if (app.isPackaged) app.setAsDefaultProtocolClient(protocolScheme);
     settingsStore = createSettingsStore({
       userDataPath: app.getPath("userData"),
@@ -757,6 +1003,48 @@ if (!app.requestSingleInstanceLock()) {
       ),
     });
     const initialSettingsSnapshot = settingsStore.getSnapshot();
+    const selectedAvatarDriver = resolveAvatarDriver(
+      process.env.PERSONA_AVATAR_DRIVER,
+    ).driver.id;
+    if (selectedAvatarDriver === LITEAVATAR_DRIVER_ID) {
+      liteAvatarAdapter = new LiteAvatarAdapter({
+        onDebug: (...details) => debugLog("liteavatar", ...details),
+        onFrame: ({ height, sequence, sid, width }) => {
+          emitToRenderer({
+            type: "avatar-frame",
+            height,
+            sequence,
+            sid,
+            url: `${PERSONA_AVATAR_SCHEME}://frame/${sequence}`,
+            width,
+          });
+        },
+        onStatus: (status) => {
+          emitToRenderer({
+            type: "avatar-driver-status",
+            status: { ...status, driverId: LITEAVATAR_DRIVER_ID },
+          });
+        },
+        workerPath: resolveLiteAvatarWorkerPath({
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+        }),
+      });
+    } else if (selectedAvatarDriver === S4B_DRIVER_ID) {
+      s4bAdapter = new S4bAdapter({
+        onPack: emitToRenderer,
+        onStatus: (status) => {
+          emitToRenderer({ type: "avatar-driver-status", status });
+        },
+      });
+    }
+    avatarDriver = createAvatarDriverHost({
+      adapter: liteAvatarAdapter ?? s4bAdapter,
+      driverId: process.env.PERSONA_AVATAR_DRIVER,
+      onDebug: (...details) => debugLog("avatar driver", ...details),
+      onRendererEvent: emitToRenderer,
+    });
+    debugLog("avatar driver initialized", avatarDriver.getStatus());
     modelConfigured = snapshotHasConfiguredModel(initialSettingsSnapshot);
     mcpAnimationCatalogSignature = animationCatalogSignature(
       initialSettingsSnapshot,
@@ -768,8 +1056,29 @@ if (!app.requestSingleInstanceLock()) {
       }
       return net.fetch(pathToFileURL(assetPath).href);
     });
+    protocol.handle(PERSONA_AVATAR_SCHEME, (request) =>
+      createLiteAvatarFrameResponse(liteAvatarAdapter, request.url),
+    );
+    protocol.handle(PERSONA_S4B_SCHEME, async (request) => {
+      const media = s4bAdapter?.resolveMediaRequest(request.url);
+      if (!media) return new Response("S4b clip not found", { status: 404 });
+      const response = await net.fetch(pathToFileURL(media.filePath).href, {
+        headers: request.headers,
+      });
+      const headers = new Headers(response.headers);
+      headers.set("content-type", media.mimeType);
+      headers.set("cache-control", "private, max-age=3600");
+      return new Response(response.body, {
+        headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
+    });
+    if (modelConfigured) avatarDriver.start();
 
-    ipcMain.handle("persona:get-snapshot", () => latestEvent);
+    ipcMain.handle("persona:get-snapshot", () => [
+      ...rendererSnapshotEvents.values(),
+    ]);
     ipcMain.handle("persona:settings-get", () => settingsStore.getSnapshot());
     ipcMain.handle("persona:settings-import-model", async (_event, metadata) => {
       const filePath = await selectAssetFile("model");
@@ -875,9 +1184,44 @@ if (!app.requestSingleInstanceLock()) {
     );
     ipcMain.on("persona:pointer-region", (event, pointerOverCharacter) => {
       if (avatarWindow?.webContents !== event.sender) return;
-      syncWindowInteraction(
-        windowInteraction.setPointerOverCharacter(pointerOverCharacter),
+      rendererPointerOverCharacter = Boolean(pointerOverCharacter);
+      syncPointerInteraction();
+    });
+    ipcMain.on("persona:frame-pointer-geometry", (event, payload) => {
+      if (avatarWindow?.webContents !== event.sender || avatarWindow.isDestroyed()) {
+        return;
+      }
+      setFramePointerGeometry(avatarWindow, payload);
+      sendAvatarWindowEvent(
+        "persona:frame-adjustment-mode",
+        frameAdjustmentMode,
       );
+    });
+    ipcMain.on("persona:set-frame-adjustment-mode", (event, active) => {
+      if (avatarWindow?.webContents !== event.sender) return;
+      setFrameAdjustmentMode(active);
+    });
+    ipcMain.on("persona:s4b-mouth-transition", (event, payload) => {
+      if (avatarWindow?.webContents !== event.sender) return;
+      const currentTime = Number(payload?.currentTime);
+      const level = Number(payload?.level);
+      const reason = ["open-threshold", "silence-envelope", "voice-not-speaking"].includes(
+        payload?.reason,
+      )
+        ? payload.reason
+        : "unknown";
+      debugLog("s4b mouth transition", {
+        active: Boolean(payload?.active),
+        currentTime: Number.isFinite(currentTime) ? currentTime : null,
+        level: Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : null,
+        paused: Boolean(payload?.paused),
+        reason,
+        voiceActivity: ["idle", "listening", "thinking", "speaking"].includes(
+          payload?.voiceActivity,
+        )
+          ? payload.voiceActivity
+          : "idle",
+      });
     });
     ipcMain.on("persona:show-settings", (event) => {
       if (avatarWindow?.webContents !== event.sender) return;
@@ -979,8 +1323,14 @@ app.on("activate", () => showOverlay({ focus: true }));
 
 app.on("before-quit", () => {
   isQuitting = true;
+  debugLog("run stopping");
+  clearInterval(debugResourceTimer);
+  debugResourceTimer = null;
+  clearTimeout(windowMoveReleaseTimer);
+  windowMoveReleaseTimer = null;
   clearTimeout(hyprlandConfigurationTimer);
   audioListener?.stop();
+  void avatarDriver?.stop();
   globalShortcut.unregisterAll();
   void mcpHandler?.close();
   void bridge

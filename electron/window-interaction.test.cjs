@@ -3,11 +3,96 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  FramePointerHandoff,
   WindowInteractionController,
   applyInteractionToWindow,
   normalizeInteractionMode,
   shouldIgnoreMouseEvents,
 } = require("./window-interaction.cjs");
+
+test("main-process frame handoff survives the person-to-toolbar transition", () => {
+  const handoff = new FramePointerHandoff({ leaveDelayMs: 220 });
+  const acquired = handoff.setFrameRect({
+    left: 100,
+    top: 150,
+    right: 300,
+    bottom: 600,
+  });
+  assert.equal(acquired.held, true);
+  assert.equal(acquired.changed, true);
+  const bounds = { x: 1_000, y: 200, width: 430, height: 680 };
+
+  const entered = handoff.sample({
+    bounds,
+    cursor: { x: 1_200, y: 360 },
+    now: 1_000,
+  });
+  assert.equal(entered.held, true);
+  assert.equal(entered.changed, false);
+  assert.deepEqual(entered.point, { x: 200, y: 160 });
+
+  // This point is in the toolbar above the character. It remains inside the
+  // renderer-reported frame even if Chromium emits mouseout for app-region.
+  const toolbar = handoff.sample({
+    bounds,
+    cursor: { x: 1_200, y: 355 },
+    now: 1_033,
+  });
+  assert.equal(toolbar.inside, true);
+  assert.equal(toolbar.held, true);
+  assert.equal(toolbar.changed, false);
+});
+
+test("frame handoff releases only after the screen cursor stays outside", () => {
+  const handoff = new FramePointerHandoff({ leaveDelayMs: 220 });
+  handoff.setFrameRect({ left: 100, top: 100, right: 300, bottom: 600 });
+  const bounds = { x: 500, y: 100, width: 430, height: 680 };
+  handoff.sample({ bounds, cursor: { x: 700, y: 400 }, now: 0 });
+
+  const leaving = handoff.sample({
+    bounds,
+    cursor: { x: 920, y: 770 },
+    now: 10,
+  });
+  assert.equal(leaving.held, true);
+  assert.equal(leaving.releaseAt, 230);
+  assert.equal(
+    handoff.sample({ bounds, cursor: { x: 920, y: 770 }, now: 229 }).held,
+    true,
+  );
+  const released = handoff.sample({
+    bounds,
+    cursor: { x: 920, y: 770 },
+    now: 230,
+  });
+  assert.equal(released.held, false);
+  assert.equal(released.changed, true);
+});
+
+test("re-entering the frame cancels a pending handoff release", () => {
+  const handoff = new FramePointerHandoff({ leaveDelayMs: 220 });
+  handoff.setFrameRect({ left: 10, top: 10, right: 200, bottom: 300 });
+  const bounds = { x: 0, y: 0 };
+  handoff.sample({ bounds, cursor: { x: 100, y: 100 }, now: 0 });
+  handoff.sample({ bounds, cursor: { x: 400, y: 400 }, now: 20 });
+  const returned = handoff.sample({
+    bounds,
+    cursor: { x: 150, y: 120 },
+    now: 100,
+  });
+  assert.equal(returned.held, true);
+  assert.equal(returned.releaseAt, null);
+});
+
+test("invalid or removed frame geometry releases the main-process lease", () => {
+  const handoff = new FramePointerHandoff();
+  assert.equal(handoff.setFrameRect({ left: 1, top: 2, right: 1, bottom: 3 }).held, false);
+  handoff.setFrameRect({ left: 1, top: 2, right: 10, bottom: 30 });
+  handoff.sample({ bounds: { x: 0, y: 0 }, cursor: { x: 5, y: 5 }, now: 0 });
+  const cleared = handoff.setFrameRect(null);
+  assert.equal(cleared.held, false);
+  assert.equal(cleared.changed, true);
+});
 
 test("auto mode only accepts the pointer over the character", () => {
   assert.equal(shouldIgnoreMouseEvents({ mode: "auto", pointerOverCharacter: false }), true);
@@ -17,6 +102,18 @@ test("auto mode only accepts the pointer over the character", () => {
 test("always mode keeps the window interactive everywhere", () => {
   assert.equal(shouldIgnoreMouseEvents({ mode: "always", pointerOverCharacter: false }), false);
   assert.equal(shouldIgnoreMouseEvents({ mode: "always", pointerOverCharacter: true }), false);
+});
+
+test("an active macOS frame gesture overrides automatic pass-through", () => {
+  assert.equal(
+    shouldIgnoreMouseEvents({ interactionActive: true, pointerOverCharacter: false }),
+    false,
+  );
+  const controller = new WindowInteractionController();
+  assert.equal(controller.resolve(), true);
+  assert.equal(controller.setInteractionActive(true), false);
+  assert.equal(controller.setPointerOverCharacter(false), null);
+  assert.equal(controller.setInteractionActive(false), true);
 });
 
 test("an unknown mode falls back to pass-through rather than blocking clicks", () => {

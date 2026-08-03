@@ -38,10 +38,16 @@
     "lint": "eslint .",
     "start": "electron .",
     "demo": "npm run build && electron .",
+    "dogfood:liteavatar": "npm run native:build && npm run build && cross-env PERSONA_AVATAR_DRIVER=liteavatar PERSONA_DEBUG=1 electron .",
+    "s4b:prepare": "node scripts/prepare-s4b-pack.cjs",
+    "dogfood:s4b": "npm run s4b:prepare && npm run native:build && npm run build && cross-env PERSONA_AVATAR_DRIVER=s4b PERSONA_DEBUG=1 electron .",
     "assets:check": "node scripts/check-assets.cjs",
     "assets:release": "node scripts/check-assets.cjs --release",
     "native:build": "node scripts/build-native.cjs",
     "native:test": "node scripts/test-native.cjs",
+    "test:liteavatar:e2e": "cross-env PERSONA_LITEAVATAR_E2E=1 node scripts/test-liteavatar-e2e.cjs",
+    "test:liteavatar:electron": "node scripts/test-liteavatar-electron-e2e.cjs",
+    "test:s4b:electron": "node scripts/test-s4b-electron-e2e.cjs",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "check": "npm run lint && npm test && npm run assets:check && npm run audit:production && npm run build",
     "dist:linux": "npm run build && node scripts/build-linux.cjs",
@@ -151,12 +157,16 @@
         "Contents/Resources/native/darwin/persona-audio-listener"
       ],
       "extendInfo": {
-        "NSAudioCaptureUsageDescription": "Persona listens to supported voice-app output levels to animate your character. Audio is processed in memory and is never stored."
+        "NSAudioCaptureUsageDescription": "Persona listens to supported voice-app output to animate your character and, when the local realistic avatar is enabled, drive lip movement. Audio is processed in memory and is never stored."
       },
       "extraResources": [
         {
           "from": "native/bin/darwin/persona-audio-listener",
           "to": "native/darwin/persona-audio-listener"
+        },
+        {
+          "from": "native/liteavatar/worker.py",
+          "to": "native/liteavatar/worker.py"
         }
       ]
     }

@@ -36,17 +36,31 @@ export function expandRectForChrome(
  */
 export function resolveFrameState({
   characterRect,
+  interactionActive = false,
   pointer,
   viewport,
   wasVisible = false,
 }: {
   characterRect: ScreenRect | null;
+  interactionActive?: boolean;
   pointer: { x: number; y: number } | null;
   viewport: { height: number; width: number };
   wasVisible?: boolean;
 }): { capturePointer: boolean; frameRect: ScreenRect | null; visible: boolean } {
   const framedRect = expandRectForChrome(characterRect, viewport);
-  if (!characterRect || !framedRect || !pointer) {
+  if (!characterRect || !framedRect) {
+    return { capturePointer: false, frameRect: framedRect, visible: false };
+  }
+
+  // A macOS app-region drag temporarily sends the pointer outside Chromium's
+  // document even though the mouse button is still holding the frame. Keep the
+  // chrome and the BrowserWindow's interactive state latched until the native
+  // move/resize gesture ends, otherwise auto pass-through cancels its own drag.
+  if (interactionActive) {
+    return { capturePointer: true, frameRect: framedRect, visible: true };
+  }
+
+  if (!pointer) {
     return { capturePointer: false, frameRect: framedRect, visible: false };
   }
 

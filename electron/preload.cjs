@@ -5,7 +5,28 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("personaBridge", {
   getSnapshot: () => ipcRenderer.invoke("persona:get-snapshot"),
   hide: () => ipcRenderer.send("persona:hide"),
+  onFrameAdjustmentMode: (listener) => {
+    const handler = (_event, active) => listener(Boolean(active));
+    ipcRenderer.on("persona:frame-adjustment-mode", handler);
+    return () => ipcRenderer.off("persona:frame-adjustment-mode", handler);
+  },
+  onFramePointerHold: (listener) => {
+    const handler = (_event, held) => listener(Boolean(held));
+    ipcRenderer.on("persona:frame-pointer-hold", handler);
+    return () => ipcRenderer.off("persona:frame-pointer-hold", handler);
+  },
+  onWindowMoving: (listener) => {
+    const handler = (_event, moving) => listener(Boolean(moving));
+    ipcRenderer.on("persona:window-moving", handler);
+    return () => ipcRenderer.off("persona:window-moving", handler);
+  },
   resizeWindow: (size) => ipcRenderer.send("persona:resize-window", size),
+  reportS4bMouthTransition: (payload) =>
+    ipcRenderer.send("persona:s4b-mouth-transition", payload),
+  setFrameAdjustmentMode: (active) =>
+    ipcRenderer.send("persona:set-frame-adjustment-mode", Boolean(active)),
+  setFramePointerGeometry: (payload) =>
+    ipcRenderer.send("persona:frame-pointer-geometry", payload),
   showSettings: () => ipcRenderer.send("persona:show-settings"),
   setPointerRegion: (pointerOverCharacter) =>
     ipcRenderer.send("persona:pointer-region", Boolean(pointerOverCharacter)),

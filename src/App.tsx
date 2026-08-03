@@ -2,11 +2,19 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from 'react';
 import { CharacterFrame } from './components/CharacterFrame';
 import { Scene } from './components/Scene';
+import { RealisticAvatar } from './components/RealisticAvatar';
+import { S4bAvatar } from './components/S4bAvatar';
+import {
+  INITIAL_AVATAR_SURFACE_STATE,
+  reduceAvatarSurface,
+  shouldShowRealisticAvatar,
+} from './avatar-surface';
 import { resolveFrameState } from './character-frame';
 import type { ScreenRect } from './pointer-region';
 import {
@@ -44,24 +52,37 @@ export function App() {
   const [characterRect, setCharacterRect] = useState<ScreenRect | null>(null);
   const [frameVisible, setFrameVisible] = useState(false);
   const [frameRect, setFrameRect] = useState<ScreenRect | null>(null);
+  const [avatarSurface, dispatchAvatarSurface] = useReducer(
+    reduceAvatarSurface,
+    INITIAL_AVATAR_SURFACE_STATE,
+  );
+  const [s4bPack, setS4bPack] = useState<S4bAvatarPack | null>(null);
+  const [s4bPhase, setS4bPhase] =
+    useState<AvatarDriverRuntimePhase>('off');
+  const [s4bReady, setS4bReady] = useState(false);
+  const [s4bRenderFailed, setS4bRenderFailed] = useState(false);
   // Held only while a frame corner is being dragged, so the character rescales
   // live without writing to disk on every pointer move.
   const [previewSize, setPreviewSize] = useState<number | null>(null);
   const characterRectRef = useRef<ScreenRect | null>(null);
+  const frameInteractionActive = useRef(false);
+  const frameInteractionSources = useRef({
+    adjustment: false,
+    gesture: false,
+    mainPointerHold: false,
+    windowMoving: false,
+  });
   const frameVisibleRef = useRef(false);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const reportedCapture = useRef<boolean | null>(null);
+  const reportedFrameGeometry = useRef<string | null>(null);
 
   useEffect(() => {
     const bridge = window.personaBridge;
     if (!bridge) return;
-    void bridge.getSnapshot().then((event) => {
-      if (event?.type === 'state') setVoice(event.state);
-    });
-    return bridge.subscribe((event) => {
-      if (event.type === 'state') {
-        setVoice(event.state);
-      } else if (event.type === 'audio-level') {
+    const handleEvent = (event: AvatarBridgeEvent) => {
+      if (event.type === 'state') setVoice(event.state);
+      else if (event.type === 'audio-level') {
         setAudioLevel(event.level);
       } else if (event.type === 'animation') {
         if (event.requestId != null) {
@@ -74,8 +95,33 @@ export function App() {
         } else if (event.animation !== 'CUSTOM') {
           setVoiceAnimation(event.animation);
         }
+      } else if (event.type === 'avatar-driver-status') {
+        if (event.status.driverId === 's4b') {
+          setS4bPhase(event.status.phase);
+          if (event.status.phase !== 'ready') setS4bReady(false);
+          if (event.status.phase === 'failed') setS4bRenderFailed(true);
+          return;
+        }
+        dispatchAvatarSurface({ phase: event.status.phase, type: 'status' });
+      } else if (event?.type === 'avatar-frame') {
+        dispatchAvatarSurface({ phase: 'ready', type: 'status' });
+        dispatchAvatarSurface({ frame: event, type: 'frame' });
+      } else if (event.type === 'avatar-state-pack') {
+        setS4bPack(event.pack);
+        setS4bReady(false);
+        setS4bRenderFailed(false);
+      }
+    };
+    void bridge.getSnapshot().then((snapshot) => {
+      for (const event of Array.isArray(snapshot)
+        ? snapshot
+        : snapshot == null
+          ? []
+          : [snapshot]) {
+        handleEvent(event);
       }
     });
+    return bridge.subscribe(handleEvent);
   }, []);
 
   useEffect(() => {
@@ -123,16 +169,40 @@ export function App() {
   const animationUrls =
     bodyOverride?.animationUrls ?? configuredAnimationUrls;
   const overrideRequestId = bodyOverride?.requestId ?? null;
+  const showRealisticAvatar = shouldShowRealisticAvatar(avatarSurface);
+  const showS4bAvatar =
+    s4bPack != null &&
+    s4bPhase === 'ready' &&
+    s4bReady &&
+    !s4bRenderFailed;
   const handleAnimationComplete = useCallback(() => {
     if (overrideRequestId == null) return;
     setBodyOverride((current) =>
       finishBodyAnimationOverride(current, overrideRequestId),
     );
   }, [overrideRequestId]);
+  const handleRealisticFrameLoaded = useCallback((sequence: number) => {
+    dispatchAvatarSurface({ sequence, type: 'loaded' });
+  }, []);
+  const handleS4bReady = useCallback(() => {
+    setS4bReady(true);
+    setS4bRenderFailed(false);
+  }, []);
+  const handleS4bError = useCallback(() => {
+    setS4bReady(false);
+    setS4bRenderFailed(true);
+  }, []);
+  const handleS4bCharacterRect = useCallback(
+    (rect: ScreenRect | null) => {
+      if (showS4bAvatar) setCharacterRect(rect);
+    },
+    [showS4bAvatar],
+  );
 
   const applyFrameState = useCallback(() => {
     const state = resolveFrameState({
       characterRect: characterRectRef.current,
+      interactionActive: frameInteractionActive.current,
       pointer: pointer.current,
       viewport: { height: window.innerHeight, width: window.innerWidth },
       wasVisible: frameVisibleRef.current,
@@ -140,10 +210,35 @@ export function App() {
     frameVisibleRef.current = state.visible;
     setFrameVisible(state.visible);
     setFrameRect(state.frameRect);
+    const geometry = { frameRect: state.frameRect, visible: state.visible };
+    const geometryKey = JSON.stringify(geometry);
+    if (reportedFrameGeometry.current !== geometryKey) {
+      reportedFrameGeometry.current = geometryKey;
+      window.personaBridge?.setFramePointerGeometry?.(geometry);
+    }
     if (reportedCapture.current === state.capturePointer) return;
     reportedCapture.current = state.capturePointer;
     window.personaBridge?.setPointerRegion(state.capturePointer);
   }, []);
+
+  const setFrameInteractionSource = useCallback(
+    (
+      source: 'adjustment' | 'gesture' | 'mainPointerHold' | 'windowMoving',
+      active: boolean,
+    ) => {
+      frameInteractionSources.current[source] = active;
+      frameInteractionActive.current = Object.values(
+        frameInteractionSources.current,
+      ).some(Boolean);
+      applyFrameState();
+    },
+    [applyFrameState],
+  );
+
+  const setFrameGestureActive = useCallback(
+    (active: boolean) => setFrameInteractionSource('gesture', active),
+    [setFrameInteractionSource],
+  );
 
   // The projected character rectangle refreshes several times per second as
   // animation moves the model. Keep it outside the pointer-listener effect so
@@ -164,7 +259,20 @@ export function App() {
       pointer.current = { x: event.clientX, y: event.clientY };
       applyFrameState();
     };
-    const forgetPointer = () => {
+    const forgetPointer = (force = false) => {
+      if (frameInteractionActive.current) return;
+      // Once Electron knows the visible frame rectangle, the main process owns
+      // the person-to-app-region handoff with the real screen cursor. Chromium
+      // may emit mouseout/blur merely because the pointer entered a native drag
+      // region; treating that as a true exit is the bug that made the chrome
+      // vanish before pointerdown.
+      if (
+        !force &&
+        frameVisibleRef.current &&
+        window.personaBridge?.onFramePointerHold
+      ) {
+        return;
+      }
       if (pointer.current == null) return;
       pointer.current = null;
       applyFrameState();
@@ -179,41 +287,104 @@ export function App() {
 
     window.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseout', handleOut);
-    document.addEventListener('mouseleave', forgetPointer);
+    const handleLeave = () => forgetPointer();
+    document.addEventListener('mouseleave', handleLeave);
     // Losing focus means the pointer is almost certainly somewhere else, and
     // pass-through windows do not always get a final move on the way out.
-    window.addEventListener('blur', forgetPointer);
+    const handleBlur = () => forgetPointer();
+    window.addEventListener('blur', handleBlur);
     window.addEventListener('resize', applyFrameState);
     applyFrameState();
     return () => {
       window.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseout', handleOut);
-      document.removeEventListener('mouseleave', forgetPointer);
-      window.removeEventListener('blur', forgetPointer);
+      document.removeEventListener('mouseleave', handleLeave);
+      window.removeEventListener('blur', handleBlur);
       window.removeEventListener('resize', applyFrameState);
       window.personaBridge?.setPointerRegion(false);
+      window.personaBridge?.setFramePointerGeometry?.({
+        frameRect: null,
+        visible: false,
+      });
       frameVisibleRef.current = false;
       reportedCapture.current = null;
+      reportedFrameGeometry.current = null;
     };
   }, [applyFrameState]);
 
+  useEffect(() => {
+    const bridge = window.personaBridge;
+    if (!bridge) return;
+    const stopMoving = bridge.onWindowMoving?.((active) =>
+      setFrameInteractionSource('windowMoving', active),
+    );
+    const stopPointerHold = bridge.onFramePointerHold?.((active) => {
+      if (!active) pointer.current = null;
+      setFrameInteractionSource('mainPointerHold', active);
+    });
+    const stopAdjustment = bridge.onFrameAdjustmentMode?.((active) =>
+      setFrameInteractionSource('adjustment', active),
+    );
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') bridge.setFrameAdjustmentMode?.(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      stopMoving?.();
+      stopPointerHold?.();
+      stopAdjustment?.();
+      window.removeEventListener('keydown', handleKeyDown);
+      frameInteractionSources.current = {
+        adjustment: false,
+        gesture: false,
+        mainPointerHold: false,
+        windowMoving: false,
+      };
+      frameInteractionActive.current = false;
+    };
+  }, [setFrameInteractionSource]);
+
   return defaultModel ? (
     <main className="app">
-      <Scene
-        animation={animation}
-        animationRequest={animationRequest}
-        animationUrls={animationUrls}
-        audioLevel={audioLevel}
-        characterSize={previewSize ?? settings.character_size}
-        lighting={settings.model_lighting[defaultModel.id]}
-        modelUrl={defaultModel.asset_url}
-        onAnimationComplete={handleAnimationComplete}
-        onCharacterRect={setCharacterRect}
-        playback={bodyOverride ? 'once' : 'loop'}
-        speaking={speaking}
-      />
+      {!showRealisticAvatar && !showS4bAvatar && (
+        <Scene
+          animation={animation}
+          animationRequest={animationRequest}
+          animationUrls={animationUrls}
+          audioLevel={audioLevel}
+          characterSize={previewSize ?? settings.character_size}
+          lighting={settings.model_lighting[defaultModel.id]}
+          modelUrl={defaultModel.asset_url}
+          onAnimationComplete={handleAnimationComplete}
+          onCharacterRect={setCharacterRect}
+          playback={bodyOverride ? 'once' : 'loop'}
+          speaking={speaking}
+        />
+      )}
+      {avatarSurface.frame && (
+        <RealisticAvatar
+          active={showRealisticAvatar}
+          characterSize={previewSize ?? settings.character_size}
+          frame={avatarSurface.frame}
+          onCharacterRect={setCharacterRect}
+          onFrameLoaded={handleRealisticFrameLoaded}
+        />
+      )}
+      {s4bPack && (
+        <S4bAvatar
+          active={showS4bAvatar}
+          audioLevel={audioLevel}
+          characterSize={previewSize ?? settings.character_size}
+          onCharacterRect={handleS4bCharacterRect}
+          onError={handleS4bError}
+          onReady={handleS4bReady}
+          pack={s4bPack}
+          voice={voice}
+        />
+      )}
       <CharacterFrame
         characterSize={previewSize ?? settings.character_size}
+        onInteractionChange={setFrameGestureActive}
         onPreviewSize={setPreviewSize}
         rect={frameRect}
         visible={frameVisible}

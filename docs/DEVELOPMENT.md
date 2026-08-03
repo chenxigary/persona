@@ -2,18 +2,25 @@
 
 ## Architecture
 
-Persona has four intentionally narrow layers:
+Persona has five intentionally narrow layers:
 
 1. Native listeners discover a supported voice process and calculate a
-   normalized output level.
-2. The Electron main process owns lifecycle, window behavior, tray commands,
+   normalized output level. The macOS helper can produce bounded PCM only for
+   an explicitly selected internal driver.
+2. Avatar Driver v1 validates state, level, and animation events and owns the
+   optional in-memory PCM adapter queue.
+3. The Electron main process owns lifecycle, window behavior, tray commands,
    URL handling, the local adapter, and Persona's MCP controls.
-3. The sandboxed preload exposes only normalized Persona events and narrow
+4. The sandboxed preload exposes only normalized Persona events and narrow
    settings operations.
-4. React and Three.js render the model, blend VRMA motion, and drive VRM
-   expressions.
+5. React renders the Three.js VRM model, a bounded local LiteAvatar frame
+   surface, or an S4b single-video surface. Renderer code cannot see PCM or file
+   paths; it receives only validated custom-protocol URLs.
 
 No renderer code has filesystem, process, or raw-audio access.
+
+The driver contract, capability matrix, opt-in command, PCM backpressure, and
+renderer trade-offs are documented in [AVATAR_DRIVER.md](AVATAR_DRIVER.md).
 
 ## Settings and local media
 
@@ -40,6 +47,23 @@ copies it under Electron's per-user application-data directory.
 User media is exposed to renderers through the locked `persona-asset:`
 protocol. Requests resolve only IDs already present in the settings store; a
 renderer cannot turn the protocol into an arbitrary local-file reader.
+
+LiteAvatar frames use the separate `persona-avatar:` protocol. It serves only
+the adapter's latest validated in-memory JPEG, never a filesystem path. A
+requested sequence cannot address older media or arbitrary local data.
+The React surface uses two image elements: one stays visible while the other
+decodes the latest available frame. This avoids a blank compositor layer when
+25 changing no-cache URLs outrun Chromium image decode.
+
+S4b media uses the separate `persona-s4b:` protocol. The main process resolves
+only clip IDs from a validated pack; relative paths and symlinks must remain
+inside that pack. React keeps one speaking video mounted as the sole visible
+surface and holds its own predecoded neutral frame above it while silent. The
+speaking loop starts on an above-threshold level and returns to that canvas
+after a 320 ms dual-threshold silence envelope. Voice-state changes never swap the full-frame
+source, and audio level
+never changes playback speed, and silence events do not seek the visible video.
+See [S4B.md](S4B.md).
 
 Packaged files are never mutated. Editing packaged action metadata creates a
 copy-on-write override, and removing one creates a user-level visibility
@@ -100,6 +124,11 @@ All operating systems implement:
 - `onLevel(0..1)` for lip movement; and
 - `onStatus(...)` for diagnostics.
 
+macOS additionally supports the internal `onPcm(frame)` callback when
+`emitPcm` is explicitly enabled by an Avatar Driver. It is not a cross-platform
+listener requirement and must never be forwarded through preload or a public
+integration. Default VRM runs do not pass `--emit-pcm` to the helper.
+
 `AudioActivityGate` owns the shared short-silence behavior. Lips follow every
 level immediately. The body remains in its talking motion for 900 ms of silence
 before returning to listening, preventing sentence gaps from causing abrupt
@@ -125,6 +154,12 @@ Windows helpers write newline-delimited JSON to stdout:
 {"type":"level","level":0.21}
 ```
 
+The opt-in macOS PCM extension adds bounded `pcm` and `pcm-overflow` records.
+PCM is mono `s16le` at the tap's native rate. The Core Audio callback writes to
+a preallocated lock-free SPSC ring; JSON/base64 work happens on the helper's
+non-real-time loop. Electron validates each record and hands it to a second
+bounded queue that drops stale avatar frames under backpressure.
+
 ## Commands
 
 ```bash
@@ -134,6 +169,10 @@ npm run assets:check
 npm run build
 npm run native:build
 npm run native:test
+npm run test:liteavatar:e2e
+npm run test:liteavatar:electron
+npm run s4b:prepare
+npm run test:s4b:electron
 ```
 
 `npm run check` runs the platform-neutral checks together.
@@ -154,11 +193,27 @@ The Node suite covers settings persistence and imported-media boundaries, MCP
 discovery and tool calls, the bridge boundary, URL protocol, Hyprland rules,
 PipeWire selection and PCM normalization, process discovery on macOS and
 Windows, native NDJSON parsing, shared pause smoothing, listener lifecycle,
+Avatar Driver events and PCM backpressure, LiteAvatar runtime discovery,
+resampling, JSON-lines isolation, frame validation, restart/fallback behavior,
 asset safety, and release checksums.
 
 Vitest covers animation priority and configured animation selection. GitHub
 Actions then compiles and self-tests the native helper on its real operating
 system and builds the renderer on all three platforms.
+
+The two LiteAvatar E2E commands and the S4b Electron command are development-
+machine gates, not CI tests. The first LiteAvatar gate runs the real model
+against a WAV and enforces frame, latency, memory, swap, and queue budgets. The
+second launches Electron and verifies the changing realistic frame surface.
+The S4b gate decodes the one visible local surface, measures state and mouth
+timing, and captures screenshots to reject blank transitions. It requires one
+stable media URL and rectangle across speech, sends changing below-threshold
+levels at approximately the real macOS meter cadence, rejects repeated seeks,
+and verifies that resize/window-move gestures keep the hover frame interactive.
+
+Debug dogfood runs persist their bounded lifecycle and five-second process
+resource samples to `~/.persona/logs/persona-dogfood.log`. Raw PCM, video frames,
+and settings payloads are not written there.
 
 Headless CI cannot create a real Codex voice call or approve operating-system
 audio permissions. Before a release, manually run the checklist in

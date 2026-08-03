@@ -85,6 +85,43 @@ For a background launch:
 npm start -- --background
 ```
 
+### Experimental local realistic avatar (macOS)
+
+`liteavatar` is an explicit development-only renderer. It starts an isolated
+OpenAvatarChat/LiteAvatar worker, drives it with bounded in-memory assistant
+output PCM, and switches back to the configured VRM whenever the worker is not
+ready. The large Python/model runtime is not bundled with Persona.
+
+```bash
+PERSONA_AVATAR_DRIVER=liteavatar \
+PERSONA_LITEAVATAR_RUNTIME=/path/to/avatar-spike \
+npm start
+```
+
+On a machine where that runtime is already discoverable, the one-command
+manual check is `npm run dogfood:liteavatar`.
+
+See [LiteAvatar Gate B](docs/AVATAR_DRIVER.md) for runtime layout, measured
+performance, privacy boundaries, current audiovisual delay, and verification
+commands.
+
+For a low-resource realistic option, `s4b` holds one pre-rendered local person
+on screen and uses audio level only to start and stop its speaking loop. Keeping
+one full-frame media source avoids visible identity, crop, or scale switches at
+speech boundaries. It does not load the LiteAvatar model during normal use:
+
+```bash
+npm run s4b:prepare
+npm run test:s4b:electron
+npm run dogfood:s4b
+```
+
+The development pack remains outside the repository. See [S4b state
+avatar](docs/S4B.md) for its trade-offs, custom pack format, transparency
+requirements, and measured transition timing. Dogfood diagnostics persist at
+`~/.persona/logs/persona-dogfood.log`, including bounded listener timing and
+five-second CPU/memory samples but never PCM or video frames.
+
 ## Customize Persona
 
 Open **Settings…** from Persona's tray menu to manage the character library,
@@ -129,7 +166,7 @@ only exposes its own visual controls.
 
 ## Local voice apps
 
-Persona does not run language models. To use it with a local model stack, open
+Persona's default VRM path does not run language models. To use it with a local model stack, open
 **Settings → Voice** and select the running app or Linux playback stream that
 produces assistant audio. Advanced users can supply a cross-platform process
 pattern, while pipelines that already calculate output levels can use the
@@ -213,6 +250,8 @@ opening an issue or pull request.
 More detail:
 
 - [Architecture and development](docs/DEVELOPMENT.md)
+- [Avatar Driver v1 and LiteAvatar Gate B](docs/AVATAR_DRIVER.md)
+- [S4b pre-rendered state avatar](docs/S4B.md)
 - [Codex and integration API](docs/INTEGRATIONS.md)
 - [Product roadmap](docs/ROADMAP.zh-CN.md)
 - [Release process](docs/RELEASING.md)

@@ -127,6 +127,19 @@ describe('resolveFrameState', () => {
     expect(state.capturePointer).toBe(false);
   });
 
+  it('keeps the frame and pointer capture through a native macOS drag', () => {
+    const state = resolveFrameState({
+      characterRect,
+      interactionActive: true,
+      pointer: null,
+      viewport,
+      wasVisible: true,
+    });
+    expect(state.visible).toBe(true);
+    expect(state.capturePointer).toBe(true);
+    expect(state.frameRect).not.toBeNull();
+  });
+
   it('claims nothing before the character has loaded', () => {
     const state = resolveFrameState({
       characterRect: null,

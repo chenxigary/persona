@@ -56,6 +56,19 @@ test("preload exposes only narrow Persona and settings IPC operations", async ()
   assert.deepEqual([...exposed.keys()], ["personaBridge", "personaSettings"]);
   await bridge.getSnapshot();
   bridge.hide();
+  bridge.setFrameAdjustmentMode(true);
+  bridge.setFramePointerGeometry({
+    frameRect: { bottom: 200, left: 10, right: 100, top: 20 },
+    visible: true,
+  });
+  bridge.reportS4bMouthTransition({
+    active: true,
+    currentTime: 1.25,
+    level: 0.3,
+    paused: false,
+    reason: "open-threshold",
+    voiceActivity: "speaking",
+  });
   await settings.get();
   await settings.importModel({ model_name: "Studio Assistant" });
   await settings.createAnimation({
@@ -138,6 +151,25 @@ test("preload exposes only narrow Persona and settings IPC operations", async ()
   ]);
   assert.deepEqual(sent, [
     ["persona:hide"],
+    ["persona:set-frame-adjustment-mode", true],
+    [
+      "persona:frame-pointer-geometry",
+      {
+        frameRect: { bottom: 200, left: 10, right: 100, top: 20 },
+        visible: true,
+      },
+    ],
+    [
+      "persona:s4b-mouth-transition",
+      {
+        active: true,
+        currentTime: 1.25,
+        level: 0.3,
+        paused: false,
+        reason: "open-threshold",
+        voiceActivity: "speaking",
+      },
+    ],
     ["persona:settings-set-window-theme", "light"],
   ]);
 
@@ -148,4 +180,37 @@ test("preload exposes only narrow Persona and settings IPC operations", async ()
   unsubscribe();
   assert.deepEqual(snapshots, [{ character_size: 1.3 }]);
   assert.equal(listeners.get("persona:settings-updated").size, 0);
+
+  const moving = [];
+  const stopMoving = bridge.onWindowMoving((value) => moving.push(value));
+  const moveHandler = [...listeners.get("persona:window-moving")][0];
+  moveHandler({}, 1);
+  moveHandler({}, 0);
+  stopMoving();
+  assert.deepEqual(moving, [true, false]);
+  assert.equal(listeners.get("persona:window-moving").size, 0);
+
+  const pointerHolds = [];
+  const stopPointerHolds = bridge.onFramePointerHold((value) =>
+    pointerHolds.push(value),
+  );
+  const pointerHandler = [...listeners.get("persona:frame-pointer-hold")][0];
+  pointerHandler({}, 1);
+  pointerHandler({}, 0);
+  stopPointerHolds();
+  assert.deepEqual(pointerHolds, [true, false]);
+  assert.equal(listeners.get("persona:frame-pointer-hold").size, 0);
+
+  const adjustmentModes = [];
+  const stopAdjustmentModes = bridge.onFrameAdjustmentMode((value) =>
+    adjustmentModes.push(value),
+  );
+  const adjustmentHandler = [
+    ...listeners.get("persona:frame-adjustment-mode"),
+  ][0];
+  adjustmentHandler({}, 1);
+  adjustmentHandler({}, 0);
+  stopAdjustmentModes();
+  assert.deepEqual(adjustmentModes, [true, false]);
+  assert.equal(listeners.get("persona:frame-adjustment-mode").size, 0);
 });

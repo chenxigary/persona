@@ -1,8 +1,10 @@
 # Persona integrations
 
-Persona accepts small state and level messages from local voice experiences.
-The character renderer never needs raw audio, transcripts, prompts, credentials,
-or host-application internals.
+Persona's public integrations accept small state and level messages from local
+voice experiences. The character renderer never receives raw audio,
+transcripts, prompts, credentials, or host-application internals. An explicit
+experimental Avatar Driver may consume process-local PCM inside the Electron
+main process; it is not part of the renderer, preload, HTTP, or MCP contract.
 
 The bundled Codex and ChatGPT integration uses native process-scoped output
 listeners because those applications do not currently expose a supported
@@ -89,6 +91,12 @@ and newer and declares why it requests System Audio Recording permission.
 Application mode resolves the saved executable identity to its current process
 tree before creating the tap.
 
+The helper emits levels only unless the internal `realistic-pcm-spike` or
+`liteavatar` Avatar Driver explicitly requests bounded PCM. That opt-in
+extension does not change
+tap timing: the tap is still created only after target output starts and is
+released after output stops.
+
 Set `PERSONA_TARGET_PROCESS_PATTERN` to a case-insensitive regular expression
 to target another desktop voice application. This environment variable
 overrides automatic and advanced-pattern matching, but not an explicitly
@@ -113,9 +121,13 @@ automatic lip sync:
 - **External** disables automatic capture and waits for normalized state and
   level events through the loopback API.
 
-Persona still calculates only an in-memory output level. It does not capture the
-microphone, run language models, transcribe speech, or send audio over the
-network.
+By default Persona still calculates only an in-memory output level. The opt-in
+macOS `realistic-pcm-spike` driver carries assistant-output PCM to an internal
+bounded adapter seam, while `liteavatar` consumes that seam in an isolated
+local model process and exposes only validated JPEG frames to the renderer.
+Neither mode captures the microphone, transcribes speech, writes samples to
+disk, exposes PCM to the renderer, or sends audio over the network. See
+[Avatar Driver v1](AVATAR_DRIVER.md).
 
 ## Local models and voice pipelines
 

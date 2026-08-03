@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   NativeProcessAudioListener,
   createNdjsonParser,
+  decodePcmMessage,
   resolveNativeHelperPath,
 } = require("./native-process-audio-listener.cjs");
 
@@ -31,6 +32,94 @@ test("NDJSON parser buffers partial messages and rejects malformed lines", () =>
     { type: "level", level: 0.2 },
   ]);
   assert.deepEqual(invalid, ["not-json"]);
+});
+
+test("PCM messages decode only the bounded macOS s16le mono contract", () => {
+  const samples = Buffer.from([0, 0, 255, 127]);
+  assert.deepEqual(
+    decodePcmMessage({
+      channels: 1,
+      data: samples.toString("base64"),
+      encoding: "s16le",
+      frames: 2,
+      sampleRate: 48_000,
+      sequence: 9,
+      type: "pcm",
+    }),
+    {
+      channels: 1,
+      data: samples,
+      encoding: "s16le",
+      frames: 2,
+      sampleRate: 48_000,
+      sequence: 9,
+    },
+  );
+  assert.equal(
+    decodePcmMessage({
+      channels: 2,
+      data: samples.toString("base64"),
+      encoding: "s16le",
+      sampleRate: 48_000,
+      sequence: 9,
+      type: "pcm",
+    }),
+    null,
+  );
+  assert.equal(
+    decodePcmMessage({
+      channels: 1,
+      data: "not base64",
+      encoding: "s16le",
+      sampleRate: 48_000,
+      sequence: 9,
+      type: "pcm",
+    }),
+    null,
+  );
+});
+
+test("native listener emits PCM only when the macOS spike is explicitly enabled", async () => {
+  const spawnedArgs = [];
+  const frames = [];
+  const diagnostics = [];
+  const child = fakeChild();
+  const listener = new NativeProcessAudioListener({
+    emitPcm: true,
+    helperPath: __filename,
+    onDebug: (...details) => diagnostics.push(details),
+    onPcm: (frame) => frames.push(frame),
+    platform: "darwin",
+    processDiscovery: async () => ({ pids: [10], rootPids: [10] }),
+    spawnProcess: (_helperPath, args) => {
+      spawnedArgs.push(args);
+      return child;
+    },
+  });
+
+  await listener.start();
+  assert.deepEqual(spawnedArgs, [["--pid", "10", "--emit-pcm"]]);
+  child.stdout.emit(
+    "data",
+    `${JSON.stringify({
+      channels: 1,
+      data: Buffer.from([1, 0, 2, 0]).toString("base64"),
+      encoding: "s16le",
+      frames: 2,
+      sampleRate: 48_000,
+      sequence: 3,
+      type: "pcm",
+    })}\n`,
+  );
+
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].sequence, 3);
+  assert.deepEqual(frames[0].data, Buffer.from([1, 0, 2, 0]));
+  child.stdout.emit("data", "private-pcm-fragment\n");
+  assert.deepEqual(diagnostics, [
+    ["native listener emitted invalid JSON", { bytes: 20 }],
+  ]);
+  listener.stop();
 });
 
 test("resolves development and packaged helper locations on both native platforms", () => {
@@ -148,6 +237,105 @@ test("native listener coalesces helper-process churn into one reattach per coold
   }
 
   assert.equal(spawnCount, 2, "expected one coalesced reattach, not one per poll");
+  listener.stop();
+});
+
+test("native listener protects a tap that is attaching before its first level", async () => {
+  let pids = [10, 11];
+  let clock = 1_000;
+  let spawnCount = 0;
+  let child = null;
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    pollIntervalMs: 60_000,
+    reattachCooldownMs: 5_000,
+    now: () => clock,
+    processDiscovery: async () => ({ pids: [...pids], rootPids: [10] }),
+    spawnProcess: () => {
+      spawnCount += 1;
+      child = fakeChild();
+      return child;
+    },
+  });
+
+  await listener.start();
+  child.stdout.emit("data", '{"type":"attaching"}\n');
+
+  // Codex/Electron can add helper processes at the exact moment output starts.
+  // The old implementation killed the newly-created Core Audio tap here,
+  // before its first level message could mark the session active.
+  pids = [10, 11, 12];
+  clock += 6_000;
+  await listener.poll();
+
+  assert.equal(
+    spawnCount,
+    1,
+    "process churn must not replace a tap between output detection and its first level",
+  );
+  listener.stop();
+});
+
+test("native listener releases attaching protection when macOS reports setup failure", async () => {
+  let pids = [10, 11];
+  let clock = 1_000;
+  let spawnCount = 0;
+  let child = null;
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    pollIntervalMs: 60_000,
+    reattachCooldownMs: 5_000,
+    now: () => clock,
+    processDiscovery: async () => ({ pids: [...pids], rootPids: [10] }),
+    spawnProcess: () => {
+      spawnCount += 1;
+      child = fakeChild();
+      return child;
+    },
+  });
+
+  await listener.start();
+  child.stdout.emit("data", '{"type":"attaching"}\n');
+  child.stdout.emit(
+    "data",
+    '{"type":"error","message":"Unable to create process tap."}\n',
+  );
+  pids = [10, 11, 12];
+  clock += 6_000;
+  await listener.poll();
+
+  assert.equal(spawnCount, 2, "failed tap setup must not leave reattachment suppressed");
+  listener.stop();
+});
+
+test("ready without attaching does not protect an idle listener", async () => {
+  let pids = [10, 11];
+  let clock = 1_000;
+  let spawnCount = 0;
+  let child = null;
+  const listener = new NativeProcessAudioListener({
+    platform: "darwin",
+    helperPath: __filename,
+    pollIntervalMs: 60_000,
+    reattachCooldownMs: 5_000,
+    now: () => clock,
+    processDiscovery: async () => ({ pids: [...pids], rootPids: [10] }),
+    spawnProcess: () => {
+      spawnCount += 1;
+      child = fakeChild();
+      return child;
+    },
+  });
+
+  await listener.start();
+  child.stdout.emit("data", '{"type":"ready","source":"Windows-style helper"}\n');
+  pids = [10, 11, 12];
+  clock += 6_000;
+  await listener.poll();
+
+  assert.equal(spawnCount, 2);
   listener.stop();
 });
 
